@@ -266,10 +266,132 @@ header.top .meta code {
     padding: 1px 6px;
     font-size: 12px;
 }
+.layout {
+    display: flex;
+    align-items: flex-start;
+    max-width: 1600px;
+    margin: 0 auto;
+}
+.sidebar {
+    flex: 0 0 280px;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    background: var(--card-bg);
+    border-right: 1px solid var(--border);
+    font-size: 13px;
+}
+.sidebar-header {
+    position: sticky;
+    top: 0;
+    background: var(--file-header-bg);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 600;
+    color: var(--text);
+    z-index: 1;
+}
+.sidebar-header button {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+.sidebar-header button:hover { color: var(--text); }
+.file-list {
+    list-style: none;
+    margin: 0;
+    padding: 6px 0;
+}
+.file-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+}
+.file-list li:hover { background: var(--file-header-hover); }
+.file-list li.active {
+    background: var(--file-header-hover);
+    border-left-color: var(--accent);
+}
+.file-list .dot {
+    flex: 0 0 8px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.file-list .dot.added    { background: var(--status-added); }
+.file-list .dot.deleted  { background: var(--status-deleted); }
+.file-list .dot.modified { background: var(--status-modified); }
+.file-list .dot.renamed,
+.file-list .dot.copied   { background: var(--status-renamed); }
+.file-list .info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.file-list .name {
+    font-family: Menlo, Consolas, "Courier New", monospace;
+    font-size: 12px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.file-list .dir {
+    font-family: Menlo, Consolas, "Courier New", monospace;
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.file-list .counts {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-family: Menlo, Consolas, "Courier New", monospace;
+}
+.file-list .counts .a { color: var(--add-text); }
+.file-list .counts .d { color: var(--del-text); }
+#sidebar-show {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 90;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 4px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    font-size: 16px;
+    line-height: 1;
+    display: none;
+}
+#sidebar-show:hover { background: var(--file-header-hover); }
+body.sidebar-hidden .sidebar { display: none; }
+body.sidebar-hidden #sidebar-show { display: inline-flex; align-items: center; justify-content: center; }
+.content {
+    flex: 1;
+    min-width: 0;
+}
 main {
-    max-width: 1200px;
-    margin: 24px auto;
     padding: 0 24px 40px 24px;
+    margin-top: 24px;
 }
 .summary {
     background: var(--card-bg);
@@ -530,6 +652,16 @@ tr.flash > td {
 </style>
 </head>
 <body class="$([ "$THEME" = "dark" ] && echo -n "theme-dark ")$([ "$VIEW_MODE" = "split" ] && echo -n "view-split ")" data-initial-view="$(html_escape "$VIEW_MODE")" data-initial-theme="$(html_escape "$THEME")">
+<button type="button" id="sidebar-show" title="Show files sidebar" aria-label="Show sidebar">&#9776;</button>
+<div class="layout">
+<aside class="sidebar" aria-label="Files">
+    <div class="sidebar-header">
+        <span>Files (${FILES_CHANGED})</span>
+        <button type="button" id="sidebar-hide" title="Hide sidebar" aria-label="Hide sidebar">&times;</button>
+    </div>
+    <ul class="file-list" id="file-list"></ul>
+</aside>
+<div class="content">
 <header class="top">
 <h1>$(html_escape "$TITLE")</h1>
 <div class="meta">
@@ -597,11 +729,12 @@ else
         path = file_new
         if (file_status == "deleted") path = file_old
         if (file_status == "renamed" || file_status == "copied") path = file_old " → " file_new
-        printf "<div class=\"file-card\">"
+        printf "<div class=\"file-card\" id=\"file-%d\">", file_counter
         printf "<div class=\"file-header\"><span class=\"status %s\">%s</span><span class=\"path\">%s</span><span class=\"toggle\">collapse</span></div>", file_status, file_status, esc(path)
         printf "<div class=\"diff-body\"><table class=\"diff-table unified\"><tbody>\n"
         file_opened = 1
         in_hunk = 0
+        file_counter++
     }
     function ensure_open() {
         if (file_pending && !file_opened) open_file()
@@ -619,6 +752,7 @@ else
         file_pending = 0
         in_hunk = 0
         file_status = "modified"
+        file_counter = 0
     }
     /^diff --git / {
         flush_file()
@@ -682,6 +816,8 @@ fi
 cat <<'HTML_FOOT'
 </main>
 <footer>Generated by git-diff-to-html.sh</footer>
+</div><!-- /.content -->
+</div><!-- /.layout -->
 <div class="nav-buttons" role="group" aria-label="Change navigator">
     <button type="button" id="nav-prev" title="Previous change (p / k / Shift+Tab)">&uarr; Prev</button>
     <span class="counter" id="nav-counter">0 / 0</span>
@@ -691,10 +827,94 @@ cat <<'HTML_FOOT'
 (function () {
     // ----- Collapse/expand file cards on header click.
     document.querySelectorAll('.file-header').forEach(function (h) {
-        h.addEventListener('click', function () {
+        h.addEventListener('click', function (e) {
+            // Don't collapse when a link or button inside the header is clicked.
+            if (e.target.closest('a, button')) return;
             h.parentElement.classList.toggle('collapsed');
         });
     });
+
+    // ----- Populate the sidebar file list (BEFORE SbS is built,
+    //       so tr.add / tr.del counts come only from the unified table).
+    var fileList = document.getElementById('file-list');
+    var cards = document.querySelectorAll('.file-card');
+    cards.forEach(function (card) {
+        var statusEl = card.querySelector('.file-header .status');
+        var status = statusEl ? (statusEl.classList[1] || 'modified') : 'modified';
+        var path = (card.querySelector('.file-header .path') || {}).textContent || '';
+        var adds = card.querySelectorAll('tr.add').length;
+        var dels = card.querySelectorAll('tr.del').length;
+
+        // Split path into directory and basename.
+        var base = path, dir = '';
+        var slash = path.lastIndexOf('/');
+        if (slash >= 0) { base = path.substring(slash + 1); dir = path.substring(0, slash); }
+
+        var li = document.createElement('li');
+        li.setAttribute('data-target', card.id);
+        li.title = path;
+
+        var dot = document.createElement('span');
+        dot.className = 'dot ' + status;
+        li.appendChild(dot);
+
+        var info = document.createElement('div');
+        info.className = 'info';
+        var nameSpan = document.createElement('span');
+        nameSpan.className = 'name';
+        nameSpan.textContent = base;
+        info.appendChild(nameSpan);
+        if (dir) {
+            var dirSpan = document.createElement('span');
+            dirSpan.className = 'dir';
+            dirSpan.textContent = dir;
+            info.appendChild(dirSpan);
+        }
+        li.appendChild(info);
+
+        var counts = document.createElement('span');
+        counts.className = 'counts';
+        counts.innerHTML = '<span class="a">+' + adds + '</span> <span class="d">-' + dels + '</span>';
+        li.appendChild(counts);
+
+        li.addEventListener('click', function () {
+            card.classList.remove('collapsed');
+            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        fileList.appendChild(li);
+    });
+
+    // Highlight the currently-visible file in the sidebar.
+    if (cards.length > 0 && 'IntersectionObserver' in window) {
+        var visible = {};
+        var observer = new IntersectionObserver(function (entries) {
+            entries.forEach(function (e) {
+                visible[e.target.id] = e.isIntersecting;
+            });
+            // Pick the first visible card in document order.
+            var activeId = null;
+            for (var i = 0; i < cards.length; i++) {
+                if (visible[cards[i].id]) { activeId = cards[i].id; break; }
+            }
+            document.querySelectorAll('.file-list li').forEach(function (li) {
+                li.classList.toggle('active', li.getAttribute('data-target') === activeId);
+            });
+        }, { rootMargin: '-60px 0px -60% 0px' });
+        cards.forEach(function (c) { observer.observe(c); });
+    }
+
+    // ----- Sidebar show/hide (persisted).
+    var hideBtn = document.getElementById('sidebar-hide');
+    var showBtn = document.getElementById('sidebar-show');
+    function setSidebar(hidden) {
+        document.body.classList.toggle('sidebar-hidden', hidden);
+        try { localStorage.setItem('gd2h-sidebar', hidden ? 'hidden' : 'shown'); } catch (_) {}
+    }
+    try {
+        if (localStorage.getItem('gd2h-sidebar') === 'hidden') setSidebar(true);
+    } catch (_) {}
+    if (hideBtn) hideBtn.addEventListener('click', function () { setSidebar(true); });
+    if (showBtn) showBtn.addEventListener('click', function () { setSidebar(false); });
 
     // ----- Build the side-by-side table for each unified table.
     function mkTd(cls, html) {
