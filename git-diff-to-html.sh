@@ -10,6 +10,10 @@
 # Options:
 #   -o, --output FILE    Output HTML file (default: git-diff.html)
 #   -t, --title  TEXT    Page title (default: "Git Diff: <range>")
+#   -U, --unified N      Number of context lines around each change.
+#                        Default is very large so the full content of each
+#                        modified file is shown. Use a small number (e.g. 3)
+#                        to get a classic compact diff.
 #   -h, --help           Show this help message and exit
 #
 # Arguments:
@@ -18,9 +22,10 @@
 #                        Defaults to the last commit (HEAD~1..HEAD).
 #
 # Examples:
-#   git-diff-to-html.sh                          # last commit
+#   git-diff-to-html.sh                          # last commit, full files
 #   git-diff-to-html.sh HEAD~5..HEAD
 #   git-diff-to-html.sh -o review.html main..feature
+#   git-diff-to-html.sh -U 3 HEAD~1..HEAD        # compact 3-line context
 #   git-diff-to-html.sh abc1234                  # that single commit
 
 set -euo pipefail
@@ -28,9 +33,10 @@ set -euo pipefail
 OUTPUT="git-diff.html"
 TITLE=""
 RANGE=""
+CONTEXT_LINES="1000000"
 
 usage() {
-    sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -41,6 +47,12 @@ while [[ $# -gt 0 ]]; do
         -t|--title)
             [[ $# -ge 2 ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
             TITLE="$2"; shift 2 ;;
+        -U|--unified)
+            [[ $# -ge 2 ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
+            if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                echo "Error: $1 expects a non-negative integer" >&2; exit 2
+            fi
+            CONTEXT_LINES="$2"; shift 2 ;;
         -h|--help)
             usage; exit 0 ;;
         --)
@@ -375,7 +387,7 @@ fi
 echo '</section>'
 
 # ----- diff body -----
-DIFF_OUTPUT=$(git diff --no-color "$DIFF_RANGE" 2>/dev/null || true)
+DIFF_OUTPUT=$(git diff --no-color --unified="$CONTEXT_LINES" "$DIFF_RANGE" 2>/dev/null || true)
 
 if [[ -z "$DIFF_OUTPUT" ]]; then
     echo '<div class="empty">No changes in this range.</div>'
