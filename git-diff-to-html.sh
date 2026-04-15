@@ -14,6 +14,10 @@
 #                        Default is very large so the full content of each
 #                        modified file is shown. Use a small number (e.g. 3)
 #                        to get a classic compact diff.
+#       --view MODE      Initial view mode: "unified" (default) or "split".
+#                        A toggle is always present in the page.
+#       --theme NAME     Initial theme: "light" (default) or "dark".
+#                        A toggle is always present in the page.
 #   -h, --help           Show this help message and exit
 #
 # Arguments:
@@ -26,6 +30,7 @@
 #   git-diff-to-html.sh HEAD~5..HEAD
 #   git-diff-to-html.sh -o review.html main..feature
 #   git-diff-to-html.sh -U 3 HEAD~1..HEAD        # compact 3-line context
+#   git-diff-to-html.sh --view split --theme dark HEAD~1..HEAD
 #   git-diff-to-html.sh abc1234                  # that single commit
 
 set -euo pipefail
@@ -34,9 +39,11 @@ OUTPUT="git-diff.html"
 TITLE=""
 RANGE=""
 CONTEXT_LINES="1000000"
+VIEW_MODE="unified"
+THEME="light"
 
 usage() {
-    sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,33p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -53,6 +60,20 @@ while [[ $# -gt 0 ]]; do
                 echo "Error: $1 expects a non-negative integer" >&2; exit 2
             fi
             CONTEXT_LINES="$2"; shift 2 ;;
+        --view)
+            [[ $# -ge 2 ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
+            case "$2" in
+                unified|split) VIEW_MODE="$2" ;;
+                *) echo "Error: --view expects 'unified' or 'split'" >&2; exit 2 ;;
+            esac
+            shift 2 ;;
+        --theme)
+            [[ $# -ge 2 ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
+            case "$2" in
+                light|dark) THEME="$2" ;;
+                *) echo "Error: --theme expects 'light' or 'dark'" >&2; exit 2 ;;
+            esac
+            shift 2 ;;
         -h|--help)
             usage; exit 0 ;;
         --)
@@ -157,6 +178,7 @@ cat <<HTML_HEAD
 :root {
     --bg: #f4f5f7;
     --card-bg: #ffffff;
+    --header-bg: #ffffff;
     --border: #dfe1e6;
     --text: #172b4d;
     --muted: #6b778c;
@@ -164,13 +186,54 @@ cat <<HTML_HEAD
     --hunk-color: #005580;
     --add-bg: #e6ffed;
     --add-ln-bg: #cdffd8;
+    --add-text: #1a7f4e;
     --del-bg: #ffebe9;
     --del-ln-bg: #ffdcd7;
+    --del-text: #c92a2a;
     --ln-bg: #fafbfc;
+    --empty-bg: #f6f8fa;
+    --file-header-bg: #fafbfc;
+    --file-header-hover: #f4f5f7;
+    --code-inline-bg: #f4f5f7;
+    --button-bg: #ffffff;
+    --button-text: #42526e;
+    --accent: #0052cc;
+    --accent-text: #ffffff;
     --status-added: #36b37e;
     --status-deleted: #de350b;
     --status-modified: #0052cc;
     --status-renamed: #ff991f;
+    --shadow: 0 3px 10px rgba(9, 30, 66, 0.18);
+}
+body.theme-dark {
+    --bg: #0d1117;
+    --card-bg: #161b22;
+    --header-bg: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --hunk-bg: #1c2128;
+    --hunk-color: #58a6ff;
+    --add-bg: #04260f;
+    --add-ln-bg: #033a16;
+    --add-text: #56d364;
+    --del-bg: #3c0a12;
+    --del-ln-bg: #67060c;
+    --del-text: #f85149;
+    --ln-bg: #0d1117;
+    --empty-bg: #010409;
+    --file-header-bg: #1c2128;
+    --file-header-hover: #22272e;
+    --code-inline-bg: #1c2128;
+    --button-bg: #21262d;
+    --button-text: #c9d1d9;
+    --accent: #1f6feb;
+    --accent-text: #ffffff;
+    --status-added: #238636;
+    --status-deleted: #da3633;
+    --status-modified: #1f6feb;
+    --status-renamed: #d29922;
+    --shadow: 0 3px 12px rgba(0, 0, 0, 0.6);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -180,9 +243,10 @@ body {
     color: var(--text);
     font-size: 14px;
     line-height: 1.5;
+    transition: background-color 0.15s ease, color 0.15s ease;
 }
 header.top {
-    background: #fff;
+    background: var(--header-bg);
     border-bottom: 1px solid var(--border);
     padding: 20px 24px;
 }
@@ -196,7 +260,7 @@ header.top .meta {
     font-size: 13px;
 }
 header.top .meta code {
-    background: #f4f5f7;
+    background: var(--code-inline-bg);
     border: 1px solid var(--border);
     border-radius: 3px;
     padding: 1px 6px;
@@ -208,11 +272,18 @@ main {
     padding: 0 24px 40px 24px;
 }
 .summary {
-    background: #fff;
+    background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 3px;
     padding: 14px 18px;
     margin-bottom: 20px;
+}
+.summary-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
 }
 .summary .stats {
     display: flex;
@@ -221,8 +292,56 @@ main {
     font-size: 13px;
 }
 .summary .stats b { font-weight: 700; }
-.summary .add { color: #1a7f4e; }
-.summary .del { color: #c92a2a; }
+.summary .add { color: var(--add-text); }
+.summary .del { color: var(--del-text); }
+.toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.view-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--button-bg);
+}
+.view-toggle button {
+    background: var(--button-bg);
+    border: none;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--button-text);
+    font-family: inherit;
+}
+.view-toggle button + button { border-left: 1px solid var(--border); }
+.view-toggle button.active {
+    background: var(--accent);
+    color: var(--accent-text);
+}
+.view-toggle button:not(.active):hover { background: var(--file-header-hover); }
+#theme-toggle {
+    background: var(--button-bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    width: 32px;
+    height: 30px;
+    padding: 0;
+    cursor: pointer;
+    color: var(--button-text);
+    font-size: 16px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+#theme-toggle:hover { background: var(--file-header-hover); }
+#theme-toggle .moon { display: inline; }
+#theme-toggle .sun  { display: none; }
+body.theme-dark #theme-toggle .moon { display: none; }
+body.theme-dark #theme-toggle .sun  { display: inline; }
 .commit-list {
     margin-top: 12px;
     border-top: 1px solid var(--border);
@@ -237,7 +356,7 @@ main {
 }
 .commit-list .sha {
     font-family: Menlo, Consolas, "Courier New", monospace;
-    color: #0052cc;
+    color: var(--accent);
     flex: 0 0 auto;
     min-width: 70px;
 }
@@ -253,7 +372,7 @@ main {
 }
 .file-header {
     padding: 10px 14px;
-    background: #fafbfc;
+    background: var(--file-header-bg);
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
@@ -261,7 +380,7 @@ main {
     cursor: pointer;
     user-select: none;
 }
-.file-header:hover { background: #f4f5f7; }
+.file-header:hover { background: var(--file-header-hover); }
 .file-header .status {
     text-transform: uppercase;
     font-size: 10px;
@@ -313,9 +432,9 @@ td.ln {
 td.code { width: 100%; }
 tr.ctx td.code { color: var(--text); }
 tr.add td       { background: var(--add-bg); }
-tr.add td.ln    { background: var(--add-ln-bg); color: #1a7f4e; }
+tr.add td.ln    { background: var(--add-ln-bg); color: var(--add-text); }
 tr.del td       { background: var(--del-bg); }
-tr.del td.ln    { background: var(--del-ln-bg); color: #c92a2a; }
+tr.del td.ln    { background: var(--del-ln-bg); color: var(--del-text); }
 tr.hunk td {
     background: var(--hunk-bg);
     color: var(--hunk-color);
@@ -329,6 +448,25 @@ tr.binary td    { color: var(--muted); font-style: italic; padding: 10px 14px; }
 .file-card.collapsed .diff-body { display: none; }
 .file-card.collapsed .file-header .toggle::before { content: "▸ "; }
 .file-card .file-header .toggle::before { content: "▾ "; }
+
+/* ----- Split (side-by-side) view ----- */
+table.diff-table.sbs { display: none; }
+body.view-split table.diff-table.unified { display: none; }
+body.view-split table.diff-table.sbs     { display: table; }
+table.diff-table.sbs td.code {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+table.diff-table.sbs td.ln { border-right: 1px solid var(--border); }
+table.diff-table.sbs td.code + td.ln { border-left: 1px solid var(--border); }
+table.diff-table.sbs td.code.ctx   { color: var(--text); background: var(--card-bg); }
+table.diff-table.sbs td.code.add   { background: var(--add-bg); }
+table.diff-table.sbs td.ln.add     { background: var(--add-ln-bg); color: var(--add-text); }
+table.diff-table.sbs td.code.del   { background: var(--del-bg); }
+table.diff-table.sbs td.ln.del     { background: var(--del-ln-bg); color: var(--del-text); }
+table.diff-table.sbs td.code.empty,
+table.diff-table.sbs td.ln.empty   { background: var(--empty-bg); }
+table.diff-table.sbs tr.hunk td    { background: var(--hunk-bg); }
 .empty {
     background: #fff;
     border: 1px solid var(--border);
@@ -349,10 +487,10 @@ footer a { color: var(--muted); }
     right: 20px;
     bottom: 20px;
     z-index: 100;
-    background: #fff;
+    background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 6px;
-    box-shadow: 0 3px 10px rgba(9, 30, 66, 0.18);
+    box-shadow: var(--shadow);
     padding: 6px 10px;
     display: flex;
     align-items: center;
@@ -360,8 +498,8 @@ footer a { color: var(--muted); }
     font-size: 13px;
 }
 .nav-buttons button {
-    background: #0052cc;
-    color: #fff;
+    background: var(--accent);
+    color: var(--accent-text);
     border: none;
     padding: 6px 12px;
     border-radius: 3px;
@@ -370,10 +508,10 @@ footer a { color: var(--muted); }
     font-weight: 600;
     font-family: inherit;
 }
-.nav-buttons button:hover:not(:disabled) { background: #0043a3; }
+.nav-buttons button:hover:not(:disabled) { filter: brightness(0.92); }
 .nav-buttons button:disabled {
-    background: #dfe1e6;
-    color: #a5adba;
+    background: var(--border);
+    color: var(--muted);
     cursor: not-allowed;
 }
 .nav-buttons .counter {
@@ -391,7 +529,7 @@ tr.flash > td {
 }
 </style>
 </head>
-<body>
+<body class="$([ "$THEME" = "dark" ] && echo -n "theme-dark ")$([ "$VIEW_MODE" = "split" ] && echo -n "view-split ")" data-initial-view="$(html_escape "$VIEW_MODE")" data-initial-theme="$(html_escape "$THEME")">
 <header class="top">
 <h1>$(html_escape "$TITLE")</h1>
 <div class="meta">
@@ -402,10 +540,21 @@ tr.flash > td {
 </header>
 <main>
 <section class="summary">
-    <div class="stats">
-        <span><b>${FILES_CHANGED}</b> file$([ "$FILES_CHANGED" = "1" ] || echo s) changed</span>
-        <span class="add"><b>+${INSERTIONS}</b> insertion$([ "$INSERTIONS" = "1" ] || echo s)</span>
-        <span class="del"><b>&minus;${DELETIONS}</b> deletion$([ "$DELETIONS" = "1" ] || echo s)</span>
+    <div class="summary-top">
+        <div class="stats">
+            <span><b>${FILES_CHANGED}</b> file$([ "$FILES_CHANGED" = "1" ] || echo s) changed</span>
+            <span class="add"><b>+${INSERTIONS}</b> insertion$([ "$INSERTIONS" = "1" ] || echo s)</span>
+            <span class="del"><b>&minus;${DELETIONS}</b> deletion$([ "$DELETIONS" = "1" ] || echo s)</span>
+        </div>
+        <div class="toolbar">
+            <div class="view-toggle" role="group" aria-label="View mode">
+                <button type="button" data-view="unified"$([ "$VIEW_MODE" = "unified" ] && echo -n ' class="active"')>Unified</button>
+                <button type="button" data-view="split"$([ "$VIEW_MODE" = "split" ] && echo -n ' class="active"')>Split</button>
+            </div>
+            <button type="button" id="theme-toggle" title="Toggle dark / light theme" aria-label="Toggle theme">
+                <span class="moon">&#9790;</span><span class="sun">&#9788;</span>
+            </button>
+        </div>
     </div>
 HTML_HEAD
 
@@ -450,7 +599,7 @@ else
         if (file_status == "renamed" || file_status == "copied") path = file_old " → " file_new
         printf "<div class=\"file-card\">"
         printf "<div class=\"file-header\"><span class=\"status %s\">%s</span><span class=\"path\">%s</span><span class=\"toggle\">collapse</span></div>", file_status, file_status, esc(path)
-        printf "<div class=\"diff-body\"><table class=\"diff-table\"><tbody>\n"
+        printf "<div class=\"diff-body\"><table class=\"diff-table unified\"><tbody>\n"
         file_opened = 1
         in_hunk = 0
     }
@@ -540,31 +689,168 @@ cat <<'HTML_FOOT'
 </div>
 <script>
 (function () {
-    // Collapse/expand file cards on header click.
+    // ----- Collapse/expand file cards on header click.
     document.querySelectorAll('.file-header').forEach(function (h) {
         h.addEventListener('click', function () {
             h.parentElement.classList.toggle('collapsed');
         });
     });
 
-    // Build the list of change groups: clusters of consecutive add/del rows.
-    var groups = [];
-    document.querySelectorAll('tr.add, tr.del').forEach(function (row) {
-        var prev = row.previousElementSibling;
-        if (!prev || !(prev.classList.contains('add') || prev.classList.contains('del'))) {
-            groups.push(row);
+    // ----- Build the side-by-side table for each unified table.
+    function mkTd(cls, html) {
+        var td = document.createElement('td');
+        td.className = cls;
+        td.innerHTML = html;
+        return td;
+    }
+    function buildSbs(unifiedTable) {
+        var sbs = document.createElement('table');
+        sbs.className = 'diff-table sbs';
+        var tbody = document.createElement('tbody');
+        sbs.appendChild(tbody);
+
+        var rows = Array.prototype.slice.call(unifiedTable.querySelectorAll('tbody > tr'));
+        var i = 0;
+        while (i < rows.length) {
+            var r = rows[i];
+            if (r.classList.contains('hunk') || r.classList.contains('binary') || r.classList.contains('nonewline')) {
+                var tr = document.createElement('tr');
+                tr.className = r.className;
+                var td = document.createElement('td');
+                td.colSpan = 4;
+                td.className = 'code';
+                var srcTd = r.querySelector('td.code') || r.querySelector('td[colspan]') || r.querySelector('td');
+                td.innerHTML = srcTd.innerHTML;
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                i++;
+                continue;
+            }
+            if (r.classList.contains('ctx')) {
+                var tds = r.querySelectorAll('td');
+                var ll = tds[0].textContent;
+                var rl = tds[1].textContent;
+                var code = tds[2].innerHTML;
+                if (code.charAt(0) === ' ') code = code.substring(1);
+                var tr2 = document.createElement('tr');
+                tr2.className = 'ctx';
+                tr2.appendChild(mkTd('ln', ll));
+                tr2.appendChild(mkTd('code ctx', code));
+                tr2.appendChild(mkTd('ln', rl));
+                tr2.appendChild(mkTd('code ctx', code));
+                tbody.appendChild(tr2);
+                i++;
+                continue;
+            }
+            // Collect consecutive del rows then consecutive add rows.
+            var dels = [];
+            while (i < rows.length && rows[i].classList.contains('del')) { dels.push(rows[i]); i++; }
+            var adds = [];
+            while (i < rows.length && rows[i].classList.contains('add')) { adds.push(rows[i]); i++; }
+            var maxN = Math.max(dels.length, adds.length);
+            for (var j = 0; j < maxN; j++) {
+                var d = dels[j], a = adds[j];
+                var cls = (d && a) ? 'mod' : (d ? 'del' : 'add');
+                var tr3 = document.createElement('tr');
+                tr3.className = cls;
+                if (d) {
+                    var dtds = d.querySelectorAll('td');
+                    var dln = dtds[0].textContent;
+                    var dcode = dtds[2].innerHTML;
+                    if (dcode.charAt(0) === '-') dcode = dcode.substring(1);
+                    tr3.appendChild(mkTd('ln del', dln));
+                    tr3.appendChild(mkTd('code del', dcode));
+                } else {
+                    tr3.appendChild(mkTd('ln empty', ''));
+                    tr3.appendChild(mkTd('code empty', ''));
+                }
+                if (a) {
+                    var atds = a.querySelectorAll('td');
+                    var aln = atds[1].textContent;
+                    var acode = atds[2].innerHTML;
+                    if (acode.charAt(0) === '+') acode = acode.substring(1);
+                    tr3.appendChild(mkTd('ln add', aln));
+                    tr3.appendChild(mkTd('code add', acode));
+                } else {
+                    tr3.appendChild(mkTd('ln empty', ''));
+                    tr3.appendChild(mkTd('code empty', ''));
+                }
+                tbody.appendChild(tr3);
+            }
         }
+        return sbs;
+    }
+    document.querySelectorAll('table.diff-table.unified').forEach(function (t) {
+        var sbs = buildSbs(t);
+        t.parentNode.insertBefore(sbs, t.nextSibling);
     });
 
+    // ----- Theme toggle (persisted in localStorage).
+    var themeBtn = document.getElementById('theme-toggle');
+    function applyTheme(theme) {
+        if (theme === 'dark') document.body.classList.add('theme-dark');
+        else document.body.classList.remove('theme-dark');
+    }
+    try {
+        var saved = localStorage.getItem('gd2h-theme');
+        if (saved) applyTheme(saved);
+    } catch (_) {}
+    themeBtn.addEventListener('click', function () {
+        var isDark = document.body.classList.toggle('theme-dark');
+        try { localStorage.setItem('gd2h-theme', isDark ? 'dark' : 'light'); } catch (_) {}
+    });
+
+    // ----- View toggle (unified / split).
+    var currentView = document.body.classList.contains('view-split') ? 'split' : 'unified';
+    var viewButtons = document.querySelectorAll('.view-toggle button');
+
+    function setView(view) {
+        currentView = view;
+        if (view === 'split') document.body.classList.add('view-split');
+        else document.body.classList.remove('view-split');
+        viewButtons.forEach(function (b) {
+            b.classList.toggle('active', b.getAttribute('data-view') === view);
+        });
+        try { localStorage.setItem('gd2h-view', view); } catch (_) {}
+        rebuildGroups();
+    }
+    try {
+        var savedView = localStorage.getItem('gd2h-view');
+        if (savedView === 'unified' || savedView === 'split') setView(savedView);
+    } catch (_) {}
+    viewButtons.forEach(function (b) {
+        b.addEventListener('click', function () { setView(b.getAttribute('data-view')); });
+    });
+
+    // ----- Change navigator (prev/next). Groups depend on current view.
     var idx = -1;
+    var groups = [];
     var prevBtn = document.getElementById('nav-prev');
     var nextBtn = document.getElementById('nav-next');
     var counter = document.getElementById('nav-counter');
 
-    function updateCounter() {
-        counter.textContent = (groups.length === 0 ? 0 : (idx < 0 ? 0 : idx + 1)) + ' / ' + groups.length;
+    function isChange(r) {
+        return r.classList.contains('add') || r.classList.contains('del') || r.classList.contains('mod');
     }
-
+    function rebuildGroups() {
+        var sel = (currentView === 'split')
+            ? 'table.diff-table.sbs > tbody > tr'
+            : 'table.diff-table.unified > tbody > tr';
+        var rows = Array.prototype.slice.call(document.querySelectorAll(sel));
+        groups = [];
+        for (var i = 0; i < rows.length; i++) {
+            if (isChange(rows[i])) {
+                var prev = rows[i].previousElementSibling;
+                if (!prev || !isChange(prev)) groups.push(rows[i]);
+            }
+        }
+        idx = -1;
+        prevBtn.disabled = nextBtn.disabled = (groups.length === 0);
+        updateCounter();
+    }
+    function updateCounter() {
+        counter.textContent = (idx < 0 ? 0 : idx + 1) + ' / ' + groups.length;
+    }
     function goTo(i) {
         if (groups.length === 0) return;
         idx = ((i % groups.length) + groups.length) % groups.length;
@@ -577,13 +863,8 @@ cat <<'HTML_FOOT'
         updateCounter();
     }
 
-    if (groups.length === 0) {
-        prevBtn.disabled = true;
-        nextBtn.disabled = true;
-    }
     prevBtn.addEventListener('click', function () { goTo(idx < 0 ? groups.length - 1 : idx - 1); });
     nextBtn.addEventListener('click', function () { goTo(idx + 1); });
-
     document.addEventListener('keydown', function (e) {
         var t = e.target;
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -600,7 +881,7 @@ cat <<'HTML_FOOT'
         }
     });
 
-    updateCounter();
+    rebuildGroups();
 })();
 </script>
 </body>
