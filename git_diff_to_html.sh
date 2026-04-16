@@ -420,7 +420,7 @@ body.sidebar-hidden #sidebar-show { display: inline-flex; align-items: center; j
 .content {
     flex: 1;
     min-width: 0;
-    overflow: hidden;
+    overflow: clip;
 }
 main {
     padding: 0 24px 40px 24px;
@@ -523,7 +523,7 @@ body.theme-dark #theme-toggle .sun  { display: inline; }
     border: 1px solid var(--border);
     border-radius: 3px;
     margin-bottom: 16px;
-    overflow: hidden;
+    overflow: clip;
 }
 .file-header {
     padding: 10px 14px;
@@ -534,6 +534,9 @@ body.theme-dark #theme-toggle .sun  { display: inline; }
     gap: 10px;
     cursor: pointer;
     user-select: none;
+    position: sticky;
+    top: 0;
+    z-index: 2;
 }
 .file-header:hover { background: var(--file-header-hover); }
 .file-header .status {
