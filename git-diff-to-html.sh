@@ -545,12 +545,15 @@ table.diff-table td {
 }
 td.ln {
     width: 1%;
-    min-width: 42px;
+    min-width: 40px;
+    max-width: 50px;
+    padding: 0 6px;
     text-align: right;
     color: var(--muted);
     background: var(--ln-bg);
     border-right: 1px solid var(--border);
     user-select: none;
+    overflow: hidden;
 }
 td.code { width: 100%; }
 tr.ctx td.code { color: var(--text); }
@@ -573,12 +576,13 @@ tr.binary td    { color: var(--muted); font-style: italic; padding: 10px 14px; }
 .file-card .file-header .toggle::before { content: "▾ "; }
 
 /* ----- Split (side-by-side) view ----- */
-table.diff-table.sbs { display: none; table-layout: fixed; }
+table.diff-table.sbs { display: none; }
 body.view-split table.diff-table.unified { display: none; }
 body.view-split table.diff-table.sbs     { display: table; }
 table.diff-table.sbs td.ln {
-    width: 42px;
-    min-width: 42px;
+    width: 40px;
+    min-width: 40px;
+    max-width: 50px;
     border-right: 1px solid var(--border);
 }
 table.diff-table.sbs td.code {
