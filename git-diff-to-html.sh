@@ -388,6 +388,7 @@ body.sidebar-hidden #sidebar-show { display: inline-flex; align-items: center; j
 .content {
     flex: 1;
     min-width: 0;
+    overflow: hidden;
 }
 main {
     padding: 0 24px 40px 24px;
@@ -530,7 +531,7 @@ body.theme-dark #theme-toggle .sun  { display: inline; }
     font-size: 11px;
     flex: 0 0 auto;
 }
-.diff-body { overflow-x: auto; }
+.diff-body { overflow-x: auto; max-width: 100%; }
 table.diff-table {
     border-collapse: collapse;
     width: 100%;
@@ -572,15 +573,21 @@ tr.binary td    { color: var(--muted); font-style: italic; padding: 10px 14px; }
 .file-card .file-header .toggle::before { content: "▾ "; }
 
 /* ----- Split (side-by-side) view ----- */
-table.diff-table.sbs { display: none; }
+table.diff-table.sbs { display: none; table-layout: fixed; }
 body.view-split table.diff-table.unified { display: none; }
 body.view-split table.diff-table.sbs     { display: table; }
+table.diff-table.sbs td.ln {
+    width: 42px;
+    min-width: 42px;
+    border-right: 1px solid var(--border);
+}
 table.diff-table.sbs td.code {
+    width: 50%;
     white-space: pre-wrap;
     word-break: break-word;
+    overflow-wrap: break-word;
 }
-table.diff-table.sbs td.ln { border-right: 1px solid var(--border); }
-table.diff-table.sbs td.code + td.ln { border-left: 1px solid var(--border); }
+table.diff-table.sbs td.code + td.ln { border-left: 2px solid var(--border); }
 table.diff-table.sbs td.code.ctx   { color: var(--text); background: var(--card-bg); }
 table.diff-table.sbs td.code.add   { background: var(--add-bg); }
 table.diff-table.sbs td.ln.add     { background: var(--add-ln-bg); color: var(--add-text); }
