@@ -174,6 +174,7 @@ cat <<HTML_HEAD
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>$(html_escape "$TITLE")</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23282c34'/%3E%3Ctext x='4' y='13' font-family='monospace' font-size='10' fill='%23e06c75'%3E-%3C/text%3E%3Crect x='12' y='6' width='14' height='4' rx='1' fill='%23e06c75' opacity='.6'/%3E%3Ctext x='4' y='24' font-family='monospace' font-size='10' fill='%2398c379'%3E+%3C/text%3E%3Crect x='12' y='17' width='16' height='4' rx='1' fill='%2398c379' opacity='.6'/%3E%3Crect x='12' y='24' width='10' height='4' rx='1' fill='%2398c379' opacity='.6'/%3E%3C/svg%3E">
 <style>
 :root {
     --bg: #f4f5f7;
@@ -248,7 +249,7 @@ body {
 header.top {
     background: var(--header-bg);
     border-bottom: 1px solid var(--border);
-    padding: 20px 24px;
+    padding: 16px 24px;
 }
 header.top h1 {
     margin: 0 0 6px 0;
@@ -268,12 +269,11 @@ header.top .meta code {
 }
 .layout {
     display: flex;
-    align-items: flex-start;
-    max-width: 1600px;
-    margin: 0 auto;
+    align-items: stretch;
+    min-height: calc(100vh - 60px);
 }
 .sidebar {
-    flex: 0 0 280px;
+    flex: 0 0 260px;
     position: sticky;
     top: 0;
     height: 100vh;
@@ -281,18 +281,23 @@ header.top .meta code {
     background: var(--card-bg);
     border-right: 1px solid var(--border);
     font-size: 13px;
+    display: flex;
+    flex-direction: column;
 }
 .sidebar-header {
     position: sticky;
     top: 0;
-    background: var(--file-header-bg);
+    background: var(--card-bg);
     border-bottom: 1px solid var(--border);
-    padding: 10px 14px;
+    padding: 12px 14px 8px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     font-weight: 600;
-    color: var(--text);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
     z-index: 1;
 }
 .sidebar-header button {
@@ -305,24 +310,48 @@ header.top .meta code {
     line-height: 1;
 }
 .sidebar-header button:hover { color: var(--text); }
+.sidebar-filter {
+    padding: 0 10px 8px;
+    position: sticky;
+    top: 38px;
+    background: var(--card-bg);
+    z-index: 1;
+}
+.sidebar-filter input {
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+}
+.sidebar-filter input::placeholder { color: var(--muted); }
+.sidebar-filter input:focus { border-color: var(--accent); }
 .file-list {
     list-style: none;
     margin: 0;
-    padding: 6px 0;
+    padding: 2px 0;
+    flex: 1;
+    overflow-y: auto;
 }
 .file-list li {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 12px;
+    padding: 5px 12px;
     cursor: pointer;
     border-left: 3px solid transparent;
+    transition: background 0.1s;
 }
 .file-list li:hover { background: var(--file-header-hover); }
 .file-list li.active {
     background: var(--file-header-hover);
     border-left-color: var(--accent);
 }
+.file-list li.hidden { display: none; }
 .file-list .dot {
     flex: 0 0 8px;
     width: 8px;
@@ -366,23 +395,26 @@ header.top .meta code {
 .file-list .counts .d { color: var(--del-text); }
 #sidebar-show {
     position: fixed;
-    top: 16px;
-    left: 16px;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
     z-index: 90;
-    width: 34px;
-    height: 34px;
+    width: 24px;
+    height: 48px;
     padding: 0;
-    border-radius: 4px;
+    border-radius: 0 6px 6px 0;
     background: var(--card-bg);
     border: 1px solid var(--border);
-    color: var(--text);
+    border-left: none;
+    color: var(--muted);
     cursor: pointer;
     box-shadow: var(--shadow);
-    font-size: 16px;
+    font-size: 14px;
     line-height: 1;
     display: none;
+    transition: color 0.15s;
 }
-#sidebar-show:hover { background: var(--file-header-hover); }
+#sidebar-show:hover { color: var(--text); background: var(--file-header-hover); }
 body.sidebar-hidden .sidebar { display: none; }
 body.sidebar-hidden #sidebar-show { display: inline-flex; align-items: center; justify-content: center; }
 .content {
@@ -663,12 +695,15 @@ tr.flash > td {
 </style>
 </head>
 <body class="$([ "$THEME" = "dark" ] && echo -n "theme-dark ")$([ "$VIEW_MODE" = "split" ] && echo -n "view-split ")" data-initial-view="$(html_escape "$VIEW_MODE")" data-initial-theme="$(html_escape "$THEME")">
-<button type="button" id="sidebar-show" title="Show files sidebar" aria-label="Show sidebar">&#9776;</button>
+<button type="button" id="sidebar-show" title="Show files sidebar" aria-label="Show sidebar">&#9656;</button>
 <div class="layout">
 <aside class="sidebar" aria-label="Files">
     <div class="sidebar-header">
         <span>Files (${FILES_CHANGED})</span>
         <button type="button" id="sidebar-hide" title="Hide sidebar" aria-label="Hide sidebar">&times;</button>
+    </div>
+    <div class="sidebar-filter">
+        <input type="text" id="file-filter" placeholder="Filter files…" autocomplete="off" spellcheck="false">
     </div>
     <ul class="file-list" id="file-list"></ul>
 </aside>
@@ -926,6 +961,18 @@ cat <<'HTML_FOOT'
     } catch (_) {}
     if (hideBtn) hideBtn.addEventListener('click', function () { setSidebar(true); });
     if (showBtn) showBtn.addEventListener('click', function () { setSidebar(false); });
+
+    // ----- Sidebar file filter.
+    var filterInput = document.getElementById('file-filter');
+    if (filterInput) {
+        filterInput.addEventListener('input', function () {
+            var q = filterInput.value.toLowerCase();
+            document.querySelectorAll('.file-list li').forEach(function (li) {
+                var match = !q || (li.title || '').toLowerCase().indexOf(q) >= 0;
+                li.classList.toggle('hidden', !match);
+            });
+        });
+    }
 
     // ----- Build the side-by-side table for each unified table.
     function mkTd(cls, html) {
