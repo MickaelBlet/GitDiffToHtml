@@ -16,8 +16,11 @@ No dependencies beyond `git` and `bash`.
 - **Unified & Split views** -- toggle between views in the browser
 - **Light & Dark themes** -- toggle in the browser or set via CLI
 - **File sidebar** -- left panel for fast navigation between files
+- **Sticky file header** -- stays visible while scrolling through long diffs
 - **Prev/Next navigation** -- floating buttons to jump between changes
 - **Collapsible files** -- collapse/expand individual file diffs
+- **Collapse unchanged** -- fold long unchanged regions, toggle in the browser or via CLI
+- **Whitespace markers** -- visualize spaces/tabs, toggle in the browser or via CLI
 - **Commit log** -- shows commit SHAs, messages, authors, and dates
 - **Full file or compact diff** -- use `-U` to control context lines
 
@@ -64,6 +67,8 @@ git_diff_to_html.sh abc1234
 | `-U, --unified N` | Context lines around each change | Full file |
 | `--view MODE` | Initial view: `unified` or `split` | `unified` |
 | `--theme NAME` | Initial theme: `light` or `dark` | `light` |
+| `--whitespace STATE` | Initial whitespace markers: `on` or `off` | `on` |
+| `--collapse STATE` | Initial collapse-unchanged: `on` or `off` | `on` |
 | `-h, --help` | Show help | |
 
 ## License

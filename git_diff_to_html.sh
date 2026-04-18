@@ -18,6 +18,10 @@
 #                        A toggle is always present in the page.
 #       --theme NAME     Initial theme: "light" (default) or "dark".
 #                        A toggle is always present in the page.
+#       --whitespace ST  Initial whitespace markers: "on" (default) or "off".
+#                        A toggle is always present in the page.
+#       --collapse ST    Initial collapse-unchanged: "on" (default) or "off".
+#                        A toggle is always present in the page.
 #   -h, --help           Show this help message and exit
 #
 # Arguments:
@@ -35,15 +39,17 @@
 
 set -euo pipefail
 
-OUTPUT="git-diff.html"
+OUTPUT="git_diff.html"
 TITLE=""
 RANGE=""
 CONTEXT_LINES="1000000"
 VIEW_MODE="unified"
 THEME="light"
+WHITESPACE="on"
+COLLAPSE="on"
 
 usage() {
-    sed -n '3,33p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,37p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -72,6 +78,20 @@ while [[ $# -gt 0 ]]; do
             case "$2" in
                 light|dark) THEME="$2" ;;
                 *) echo "Error: --theme expects 'light' or 'dark'" >&2; exit 2 ;;
+            esac
+            shift 2 ;;
+        --whitespace)
+            [[ $# -ge 2 ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
+            case "$2" in
+                on|off) WHITESPACE="$2" ;;
+                *) echo "Error: --whitespace expects 'on' or 'off'" >&2; exit 2 ;;
+            esac
+            shift 2 ;;
+        --collapse)
+            [[ $# -ge 2 ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
+            case "$2" in
+                on|off) COLLAPSE="$2" ;;
+                *) echo "Error: --collapse expects 'on' or 'off'" >&2; exit 2 ;;
             esac
             shift 2 ;;
         -h|--help)
@@ -205,6 +225,15 @@ cat <<HTML_HEAD
     --status-modified: #0052cc;
     --status-renamed: #ff991f;
     --shadow: 0 3px 10px rgba(9, 30, 66, 0.18);
+    --syn-keyword: #d73a49;
+    --syn-string:  #032f62;
+    --syn-number:  #005cc5;
+    --syn-comment: #6a737d;
+    --syn-title:   #6f42c1;
+    --syn-variable:#e36209;
+    --syn-type:    #005cc5;
+    --syn-tag:     #22863a;
+    --syn-attr:    #6f42c1;
 }
 body.theme-dark {
     --bg: #0d1117;
@@ -235,7 +264,29 @@ body.theme-dark {
     --status-modified: #1f6feb;
     --status-renamed: #d29922;
     --shadow: 0 3px 12px rgba(0, 0, 0, 0.6);
+    --syn-keyword: #ff7b72;
+    --syn-string:  #a5d6ff;
+    --syn-number:  #79c0ff;
+    --syn-comment: #8b949e;
+    --syn-title:   #d2a8ff;
+    --syn-variable:#ffa657;
+    --syn-type:    #79c0ff;
+    --syn-tag:     #7ee787;
+    --syn-attr:    #d2a8ff;
 }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-section, .hljs-link,
+.hljs-meta-keyword, .hljs-doctag { color: var(--syn-keyword); }
+.hljs-string, .hljs-symbol, .hljs-bullet, .hljs-addition,
+.hljs-regexp, .hljs-meta-string { color: var(--syn-string); }
+.hljs-number, .hljs-literal { color: var(--syn-number); }
+.hljs-comment, .hljs-quote, .hljs-meta { color: var(--syn-comment); font-style: italic; }
+.hljs-title, .hljs-name, .hljs-selector-id, .hljs-selector-class,
+.hljs-function .hljs-title { color: var(--syn-title); }
+.hljs-variable, .hljs-template-variable, .hljs-params { color: var(--syn-variable); }
+.hljs-type, .hljs-class .hljs-title, .hljs-title.class_ { color: var(--syn-type); }
+.hljs-tag { color: var(--syn-tag); }
+.hljs-attr, .hljs-attribute { color: var(--syn-attr); }
+.hljs-deletion { color: var(--del-text); }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
@@ -311,7 +362,7 @@ header.top .meta code {
 }
 .sidebar-header button:hover { color: var(--text); }
 .sidebar-filter {
-    padding: 0 10px 8px;
+    padding: 10px 8px;
     position: sticky;
     top: 38px;
     background: var(--card-bg);
@@ -399,10 +450,10 @@ header.top .meta code {
     left: 0;
     transform: translateY(-50%);
     z-index: 90;
-    width: 24px;
-    height: 48px;
+    width: 28px;
+    height: 100vh;
     padding: 0;
-    border-radius: 0 6px 6px 0;
+    border-radius: 0;
     background: var(--card-bg);
     border: 1px solid var(--border);
     border-left: none;
@@ -417,13 +468,14 @@ header.top .meta code {
 #sidebar-show:hover { color: var(--text); background: var(--file-header-hover); }
 body.sidebar-hidden .sidebar { display: none; }
 body.sidebar-hidden #sidebar-show { display: inline-flex; align-items: center; justify-content: center; }
+body.sidebar-hidden .content { padding-left: 28px; }
 .content {
     flex: 1;
     min-width: 0;
     overflow: clip;
 }
 main {
-    padding: 0 24px 40px 24px;
+    padding: 0 24px 0 24px;
     margin-top: 24px;
 }
 .summary {
@@ -432,6 +484,9 @@ main {
     border-radius: 3px;
     padding: 14px 18px;
     margin-bottom: 20px;
+    position: sticky;
+    top: 0;
+    z-index: 3;
 }
 .summary-top {
     display: flex;
@@ -497,10 +552,30 @@ main {
 #theme-toggle .sun  { display: none; }
 body.theme-dark #theme-toggle .moon { display: none; }
 body.theme-dark #theme-toggle .sun  { display: inline; }
+.ws-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--button-bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 10px;
+    height: 30px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--button-text);
+    cursor: pointer;
+    user-select: none;
+}
+.ws-toggle:hover { background: var(--file-header-hover); }
+.ws-toggle input { margin: 0; cursor: pointer; }
+.ws-mark { color: var(--muted); opacity: 0.65; }
 .commit-list {
-    margin-top: 12px;
-    border-top: 1px solid var(--border);
-    padding-top: 10px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 10px 18px;
+    margin-bottom: 20px;
 }
 .commit-list .row {
     display: flex;
@@ -535,7 +610,7 @@ body.theme-dark #theme-toggle .sun  { display: inline; }
     cursor: pointer;
     user-select: none;
     position: sticky;
-    top: 0;
+    top: var(--summary-height, 0px);
     z-index: 2;
 }
 .file-header:hover { background: var(--file-header-hover); }
@@ -604,6 +679,14 @@ tr.hunk td {
     padding-bottom: 2px;
 }
 tr.hunk td.ln { color: var(--hunk-color); }
+tr.del .word-diff, td.code.del .word-diff {
+    background: var(--del-ln-bg);
+    border-radius: 2px;
+}
+tr.add .word-diff, td.code.add .word-diff {
+    background: var(--add-ln-bg);
+    border-radius: 2px;
+}
 tr.nonewline td { color: var(--muted); font-style: italic; }
 tr.binary td    { color: var(--muted); font-style: italic; padding: 10px 14px; }
 .file-card.collapsed .diff-body { display: none; }
@@ -647,36 +730,28 @@ footer {
     text-align: center;
     color: var(--muted);
     font-size: 12px;
-    padding: 16px 0 30px 0;
+    padding: 0 0 30px 0;
 }
 footer a { color: var(--muted); }
 .nav-buttons {
-    position: fixed;
-    right: 20px;
-    bottom: 20px;
-    z-index: 100;
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: var(--shadow);
-    padding: 6px 10px;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     font-size: 13px;
 }
 .nav-buttons button {
-    background: var(--accent);
-    color: var(--accent-text);
-    border: none;
-    padding: 6px 12px;
+    background: var(--button-bg);
+    color: var(--button-text);
+    border: 1px solid var(--border);
+    padding: 0 10px;
+    height: 30px;
     border-radius: 3px;
     cursor: pointer;
     font-size: 12px;
     font-weight: 600;
     font-family: inherit;
 }
-.nav-buttons button:hover:not(:disabled) { filter: brightness(0.92); }
+.nav-buttons button:hover:not(:disabled) { background: var(--file-header-hover); }
 .nav-buttons button:disabled {
     background: var(--border);
     color: var(--muted);
@@ -687,7 +762,18 @@ footer a { color: var(--muted); }
     font-variant-numeric: tabular-nums;
     min-width: 54px;
     text-align: center;
+    font-size: 12px;
 }
+tr.collapse-placeholder td {
+    background: var(--hunk-bg);
+    color: var(--hunk-color);
+    font-style: italic;
+    text-align: center;
+    cursor: pointer;
+    padding: 4px 8px;
+    user-select: none;
+}
+tr.collapse-placeholder:hover td { background: var(--file-header-hover); }
 tr.flash > td {
     animation: flash 1.2s ease-out;
 }
@@ -696,9 +782,10 @@ tr.flash > td {
     100% { box-shadow: inset 3px 0 0 transparent; }
 }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 </head>
-<body class="$([ "$THEME" = "dark" ] && echo -n "theme-dark ")$([ "$VIEW_MODE" = "split" ] && echo -n "view-split ")" data-initial-view="$(html_escape "$VIEW_MODE")" data-initial-theme="$(html_escape "$THEME")">
-<button type="button" id="sidebar-show" title="Show files sidebar" aria-label="Show sidebar">&#9656;</button>
+<body class="$([ "$THEME" = "dark" ] && echo -n "theme-dark ")$([ "$VIEW_MODE" = "split" ] && echo -n "view-split ")" data-initial-view="$(html_escape "$VIEW_MODE")" data-initial-theme="$(html_escape "$THEME")" data-initial-ws="$(html_escape "$WHITESPACE")" data-initial-collapse="$(html_escape "$COLLAPSE")">
+<button type="button" id="sidebar-show" title="Show files sidebar" aria-label="Show sidebar"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></button>
 <div class="layout">
 <aside class="sidebar" aria-label="Files">
     <div class="sidebar-header">
@@ -728,15 +815,29 @@ tr.flash > td {
             <span class="del"><b>&minus;${DELETIONS}</b> deletion$([ "$DELETIONS" = "1" ] || echo s)</span>
         </div>
         <div class="toolbar">
+            <div class="nav-buttons" role="group" aria-label="Change navigator">
+                <button type="button" id="nav-prev" title="Previous change (p / k / Shift+Tab)">&uarr; Prev</button>
+                <span class="counter" id="nav-counter">0 / 0</span>
+                <button type="button" id="nav-next" title="Next change (n / j / Tab)">&darr; Next</button>
+            </div>
             <div class="view-toggle" role="group" aria-label="View mode">
                 <button type="button" data-view="unified"$([ "$VIEW_MODE" = "unified" ] && echo -n ' class="active"')>Unified</button>
                 <button type="button" data-view="split"$([ "$VIEW_MODE" = "split" ] && echo -n ' class="active"')>Split</button>
             </div>
+            <label class="ws-toggle" title="Show whitespace characters (&middot; for space, &rarr; for tab)">
+                <input type="checkbox" id="ws-toggle">
+                <span>Whitespace</span>
+            </label>
+            <label class="ws-toggle" title="Collapse unchanged context, keeping 30 lines around each change">
+                <input type="checkbox" id="collapse-toggle">
+                <span>Collapse</span>
+            </label>
             <button type="button" id="theme-toggle" title="Toggle dark / light theme" aria-label="Toggle theme">
                 <span class="moon">&#9790;</span><span class="sun">&#9788;</span>
             </button>
         </div>
     </div>
+</section>
 HTML_HEAD
 
 # ----- commit list -----
@@ -747,7 +848,7 @@ else
 fi
 
 if [[ -n "$LOG_OUTPUT" ]]; then
-    echo '    <div class="commit-list">'
+    echo '<section class="commit-list">'
     while IFS=$'\x1f' read -r sha author adate subject; do
         [[ -z "$sha" ]] && continue
         printf '        <div class="row"><span class="sha">%s</span><span class="subject">%s</span><span class="author">%s</span><span class="date">%s</span></div>\n' \
@@ -756,10 +857,8 @@ if [[ -n "$LOG_OUTPUT" ]]; then
             "$(html_escape "$author")" \
             "$(html_escape "$adate")"
     done <<< "$LOG_OUTPUT"
-    echo '    </div>'
+    echo '</section>'
 fi
-
-echo '</section>'
 
 # ----- diff body -----
 DIFF_OUTPUT=$(git diff --no-color --unified="$CONTEXT_LINES" "$DIFF_RANGE" 2>/dev/null || true)
@@ -864,16 +963,22 @@ fi
 
 cat <<'HTML_FOOT'
 </main>
-<footer>Generated by git_diff_to_html.sh</footer>
+<footer>Generated by <a href="https://github.com/MickaelBlet/GitDiffToHtml">git_diff_to_html.sh</a></footer>
 </div><!-- /.content -->
 </div><!-- /.layout -->
-<div class="nav-buttons" role="group" aria-label="Change navigator">
-    <button type="button" id="nav-prev" title="Previous change (p / k / Shift+Tab)">&uarr; Prev</button>
-    <span class="counter" id="nav-counter">0 / 0</span>
-    <button type="button" id="nav-next" title="Next change (n / j / Tab)">&darr; Next</button>
-</div>
 <script>
 (function () {
+    // ----- Keep --summary-height in sync so sticky file headers sit below the toolbar.
+    var summaryEl = document.querySelector('.summary');
+    if (summaryEl) {
+        var syncSummaryHeight = function () {
+            document.documentElement.style.setProperty('--summary-height', summaryEl.offsetHeight + 'px');
+        };
+        syncSummaryHeight();
+        window.addEventListener('resize', syncSummaryHeight);
+        if ('ResizeObserver' in window) new ResizeObserver(syncSummaryHeight).observe(summaryEl);
+    }
+
     // ----- Collapse/expand file cards on header click.
     document.querySelectorAll('.file-header').forEach(function (h) {
         h.addEventListener('click', function (e) {
@@ -1061,9 +1166,246 @@ cat <<'HTML_FOOT'
         }
         return sbs;
     }
+    // ----- Syntax highlighting (per-line, before SbS so both views get it).
+    var extLang = {
+        js:'javascript', mjs:'javascript', cjs:'javascript', jsx:'javascript',
+        ts:'typescript', tsx:'typescript',
+        py:'python', rb:'ruby', go:'go', rs:'rust',
+        java:'java', kt:'kotlin', kts:'kotlin', swift:'swift', scala:'scala',
+        c:'c', h:'c', cpp:'cpp', cc:'cpp', cxx:'cpp', hpp:'cpp', hh:'cpp', hxx:'cpp',
+        cs:'csharp', php:'php', pl:'perl', pm:'perl', lua:'lua', r:'r',
+        sh:'bash', bash:'bash', zsh:'bash',
+        json:'json', yaml:'yaml', yml:'yaml', toml:'ini', ini:'ini',
+        xml:'xml', html:'xml', htm:'xml', svg:'xml', vue:'xml',
+        css:'css', scss:'scss', sass:'scss', less:'less',
+        md:'markdown', markdown:'markdown',
+        sql:'sql', dockerfile:'dockerfile', mk:'makefile', make:'makefile'
+    };
+    function detectLang(path) {
+        var base = (path.split('/').pop() || '').toLowerCase();
+        if (base === 'dockerfile') return 'dockerfile';
+        if (base === 'makefile' || base === 'gnumakefile') return 'makefile';
+        var dot = base.lastIndexOf('.');
+        if (dot < 0) return null;
+        return extLang[base.substring(dot + 1)] || null;
+    }
+    function highlightCard(card) {
+        if (!window.hljs) return;
+        var pathEl = card.querySelector('.file-header .path');
+        if (!pathEl) return;
+        var p = pathEl.textContent;
+        var arrow = p.indexOf('\u2192');
+        if (arrow >= 0) p = p.substring(arrow + 1).trim();
+        var lang = detectLang(p);
+        if (!lang || !hljs.getLanguage(lang)) return;
+        card.querySelectorAll('table.unified > tbody > tr').forEach(function (tr) {
+            if (!(tr.classList.contains('ctx') || tr.classList.contains('add') || tr.classList.contains('del'))) return;
+            var tds = tr.querySelectorAll('td');
+            var td = tds[2];
+            if (!td) return;
+            var text = td.textContent;
+            if (text.length === 0) return;
+            var prefix = text.charAt(0);
+            var rest = text.substring(1);
+            try {
+                var res = hljs.highlight(rest, { language: lang, ignoreIllegals: true });
+                // Escape prefix char.
+                var pe = prefix === '<' ? '&lt;' : prefix === '>' ? '&gt;' : prefix === '&' ? '&amp;' : prefix;
+                td.innerHTML = pe + res.value;
+            } catch (_) {}
+        });
+    }
+    document.querySelectorAll('.file-card').forEach(highlightCard);
+
+    // ----- Intra-line (word-level) highlighting, Bitbucket-style.
+    function wordDiff(a, b) {
+        var re = /\s+|[A-Za-z0-9_]+|[^\sA-Za-z0-9_]/g;
+        var at = a.match(re) || [];
+        var bt = b.match(re) || [];
+        var n = at.length, m = bt.length;
+        if (n * m > 40000) return null;
+        var dp = new Array(n + 1);
+        for (var i = 0; i <= n; i++) dp[i] = new Int16Array(m + 1);
+        for (var i = 1; i <= n; i++) {
+            for (var j = 1; j <= m; j++) {
+                dp[i][j] = at[i - 1] === bt[j - 1]
+                    ? dp[i - 1][j - 1] + 1
+                    : (dp[i - 1][j] >= dp[i][j - 1] ? dp[i - 1][j] : dp[i][j - 1]);
+            }
+        }
+        var aMark = new Array(n), bMark = new Array(m);
+        var ci = n, cj = m;
+        while (ci > 0 && cj > 0) {
+            if (at[ci - 1] === bt[cj - 1]) { ci--; cj--; }
+            else if (dp[ci - 1][cj] >= dp[ci][cj - 1]) { aMark[ci - 1] = true; ci--; }
+            else { bMark[cj - 1] = true; cj--; }
+        }
+        while (ci > 0) { aMark[--ci] = true; }
+        while (cj > 0) { bMark[--cj] = true; }
+        function ranges(tokens, marks) {
+            var res = [], pos = 0, cur = null;
+            for (var k = 0; k < tokens.length; k++) {
+                var len = tokens[k].length;
+                var isWs = /^\s+$/.test(tokens[k]);
+                if (marks[k] && !isWs) {
+                    if (cur && cur[1] === pos) cur[1] = pos + len;
+                    else { cur = [pos, pos + len]; res.push(cur); }
+                } else {
+                    cur = null;
+                }
+                pos += len;
+            }
+            return res;
+        }
+        return { a: ranges(at, aMark), b: ranges(bt, bMark) };
+    }
+    function wrapCharRanges(html, ranges, cls) {
+        if (!ranges || !ranges.length) return html;
+        var out = '', pos = 0, ri = 0, inSpan = false;
+        var i = 0, L = html.length;
+        function sync() {
+            while (ri < ranges.length && pos >= ranges[ri][1]) {
+                if (inSpan) { out += '</span>'; inSpan = false; }
+                ri++;
+            }
+            if (!inSpan && ri < ranges.length && pos >= ranges[ri][0] && pos < ranges[ri][1]) {
+                out += '<span class="' + cls + '">';
+                inSpan = true;
+            }
+        }
+        while (i < L) {
+            var c = html.charAt(i);
+            if (c === '<') {
+                var wasIn = inSpan;
+                if (inSpan) { out += '</span>'; inSpan = false; }
+                var e = html.indexOf('>', i);
+                if (e < 0) e = L - 1;
+                out += html.substring(i, e + 1);
+                i = e + 1;
+                if (wasIn) { out += '<span class="' + cls + '">'; inSpan = true; }
+                continue;
+            }
+            sync();
+            if (c === '&') {
+                var s = html.indexOf(';', i);
+                if (s < 0) { out += c; i++; pos++; continue; }
+                out += html.substring(i, s + 1);
+                i = s + 1;
+            } else {
+                out += c;
+                i++;
+            }
+            pos++;
+        }
+        sync();
+        if (inSpan) out += '</span>';
+        return out;
+    }
+    function applyIntraLineUnified(table) {
+        var rows = Array.prototype.slice.call(table.querySelectorAll(':scope > tbody > tr'));
+        var i = 0;
+        while (i < rows.length) {
+            if (!rows[i].classList.contains('del')) { i++; continue; }
+            var dels = [];
+            while (i < rows.length && rows[i].classList.contains('del')) { dels.push(rows[i]); i++; }
+            var adds = [];
+            while (i < rows.length && rows[i].classList.contains('add')) { adds.push(rows[i]); i++; }
+            var n = Math.min(dels.length, adds.length);
+            for (var k = 0; k < n; k++) {
+                var dTd = dels[k].querySelectorAll('td')[2];
+                var aTd = adds[k].querySelectorAll('td')[2];
+                if (!dTd || !aTd) continue;
+                var dText = dTd.textContent;
+                var aText = aTd.textContent;
+                if (dText.charAt(0) === '-') dText = dText.substring(1);
+                if (aText.charAt(0) === '+') aText = aText.substring(1);
+                if (dText === aText) continue;
+                var diff = wordDiff(dText, aText);
+                if (!diff) continue;
+                // innerHTML has the prefix char at position 0, so shift ranges by +1.
+                var dR = diff.a.map(function (r) { return [r[0] + 1, r[1] + 1]; });
+                var aR = diff.b.map(function (r) { return [r[0] + 1, r[1] + 1]; });
+                dTd.innerHTML = wrapCharRanges(dTd.innerHTML, dR, 'word-diff');
+                aTd.innerHTML = wrapCharRanges(aTd.innerHTML, aR, 'word-diff');
+            }
+        }
+    }
+    document.querySelectorAll('table.diff-table.unified').forEach(applyIntraLineUnified);
+
     document.querySelectorAll('table.diff-table.unified').forEach(function (t) {
         var sbs = buildSbs(t);
         t.parentNode.insertBefore(sbs, t.nextSibling);
+    });
+
+    // ----- Collapse unchanged context (keep 30 lines around each change).
+    var collapseCheckbox = document.getElementById('collapse-toggle');
+    var COLLAPSE_CONTEXT = 30;
+    function applyCollapse(on) {
+        document.querySelectorAll('table.diff-table').forEach(function (table) {
+            table.querySelectorAll('tr.collapse-placeholder').forEach(function (tr) { tr.remove(); });
+            table.querySelectorAll('tr.ctx-hidden').forEach(function (tr) {
+                tr.style.display = '';
+                tr.classList.remove('ctx-hidden');
+            });
+            if (!on) return;
+            var rows = Array.prototype.slice.call(table.querySelectorAll(':scope > tbody > tr'));
+            var keep = new Array(rows.length);
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i];
+                if (r.classList.contains('add') || r.classList.contains('del') || r.classList.contains('mod')) {
+                    var lo = Math.max(0, i - COLLAPSE_CONTEXT);
+                    var hi = Math.min(rows.length - 1, i + COLLAPSE_CONTEXT);
+                    for (var j = lo; j <= hi; j++) keep[j] = true;
+                } else if (!r.classList.contains('ctx')) {
+                    keep[i] = true;
+                }
+            }
+            var isSbs = table.classList.contains('sbs');
+            var cols = isSbs ? 4 : 3;
+            var k = 0;
+            while (k < rows.length) {
+                if (!keep[k] && rows[k].classList.contains('ctx')) {
+                    var start = k;
+                    while (k < rows.length && !keep[k] && rows[k].classList.contains('ctx')) {
+                        rows[k].classList.add('ctx-hidden');
+                        rows[k].style.display = 'none';
+                        k++;
+                    }
+                    var count = k - start;
+                    var hiddenGroup = rows.slice(start, k);
+                    var ph = document.createElement('tr');
+                    ph.className = 'collapse-placeholder';
+                    ph.innerHTML = '<td colspan="' + cols + '">&hellip; ' + count + ' unchanged line' + (count === 1 ? '' : 's') + ' (click to expand)</td>';
+                    (function (group, placeholder) {
+                        placeholder.addEventListener('click', function () {
+                            group.forEach(function (r) {
+                                r.style.display = '';
+                                r.classList.remove('ctx-hidden');
+                            });
+                            placeholder.remove();
+                        });
+                    })(hiddenGroup, ph);
+                    rows[start].parentNode.insertBefore(ph, rows[start]);
+                } else {
+                    k++;
+                }
+            }
+        });
+    }
+    try {
+        var savedCollapse = localStorage.getItem('gd2h-collapse');
+        var collapseOn = savedCollapse === null
+            ? (document.body.getAttribute('data-initial-collapse') === 'on')
+            : (savedCollapse === 'on');
+        if (collapseOn) {
+            collapseCheckbox.checked = true;
+            applyCollapse(true);
+        }
+    } catch (_) {}
+    collapseCheckbox.addEventListener('change', function () {
+        var on = collapseCheckbox.checked;
+        applyCollapse(on);
+        try { localStorage.setItem('gd2h-collapse', on ? 'on' : 'off'); } catch (_) {}
     });
 
     // ----- Theme toggle (persisted in localStorage).
@@ -1101,6 +1443,54 @@ cat <<'HTML_FOOT'
     } catch (_) {}
     viewButtons.forEach(function (b) {
         b.addEventListener('click', function () { setView(b.getAttribute('data-view')); });
+    });
+
+    // ----- Whitespace toggle (persisted). Wraps spaces/tabs in spans so CSS
+    //       can overlay markers without changing the underlying characters.
+    var wsCheckbox = document.getElementById('ws-toggle');
+    function transformWs(html) {
+        // Only substitute inside text nodes — skip attributes/tags so
+        // syntax-highlight markup stays intact. Tab is kept after the
+        // arrow so it still advances to the next tab stop.
+        return html.replace(/(<[^>]*>)|([^<]+)/g, function (_, tag, text) {
+            if (tag) return tag;
+            return text
+                .replace(/ /g, '\x00')
+                .replace(/\t/g, '\x01')
+                .replace(/\x00/g, '<span class="ws-mark">\u00B7</span>')
+                .replace(/\x01/g, '<span class="ws-mark">\u2192</span>\t');
+        });
+    }
+    function applyWs(on) {
+        document.querySelectorAll('td.code').forEach(function (td) {
+            if (on) {
+                if (td.dataset.orig === undefined) td.dataset.orig = td.innerHTML;
+                // Unified-view cells start with the diff prefix (' ', '+', '-'),
+                // which isn't part of the source line — skip it so its space
+                // doesn't get marked.
+                var src = td.dataset.orig;
+                var skipPrefix = !!td.closest('table.unified') && src.length > 0;
+                td.innerHTML = skipPrefix
+                    ? src.charAt(0) + transformWs(src.substring(1))
+                    : transformWs(src);
+            } else if (td.dataset.orig !== undefined) {
+                td.innerHTML = td.dataset.orig;
+            }
+        });
+        document.body.classList.toggle('show-whitespace', on);
+        wsCheckbox.checked = on;
+    }
+    try {
+        var savedWs = localStorage.getItem('gd2h-ws');
+        var wsOn = savedWs === null
+            ? (document.body.getAttribute('data-initial-ws') === 'on')
+            : (savedWs === 'on');
+        if (wsOn) applyWs(true);
+    } catch (_) {}
+    wsCheckbox.addEventListener('change', function () {
+        var on = wsCheckbox.checked;
+        applyWs(on);
+        try { localStorage.setItem('gd2h-ws', on ? 'on' : 'off'); } catch (_) {}
     });
 
     // ----- Change navigator (prev/next). Groups depend on current view.
@@ -1163,6 +1553,19 @@ cat <<'HTML_FOOT'
     });
 
     rebuildGroups();
+
+    // ----- Auto-jump to the first change on load.
+    if (groups.length > 0 && !window.location.hash) {
+        idx = 0;
+        var first = groups[0];
+        var card = first.closest('.file-card');
+        if (card) card.classList.remove('collapsed');
+        requestAnimationFrame(function () {
+            first.scrollIntoView({ block: 'center' });
+            first.classList.add('flash');
+            updateCounter();
+        });
+    }
 })();
 </script>
 </body>
