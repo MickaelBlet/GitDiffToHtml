@@ -599,6 +599,7 @@ body.theme-dark #theme-toggle .sun  { display: inline; }
     border-radius: 3px;
     margin-bottom: 16px;
     overflow: clip;
+    scroll-margin-top: var(--summary-height, 0px);
 }
 .file-header {
     padding: 10px 14px;
@@ -768,10 +769,15 @@ tr.collapse-placeholder td {
     background: var(--hunk-bg);
     color: var(--hunk-color);
     font-style: italic;
-    text-align: center;
+    text-align: left;
     cursor: pointer;
     padding: 4px 8px;
     user-select: none;
+}
+tr.collapse-placeholder td .cph-text {
+    position: sticky;
+    left: 8px;
+    display: inline-block;
 }
 tr.collapse-placeholder:hover td { background: var(--file-header-hover); }
 tr.flash > td {
@@ -1039,22 +1045,31 @@ cat <<'HTML_FOOT'
     });
 
     // Highlight the currently-visible file in the sidebar.
-    if (cards.length > 0 && 'IntersectionObserver' in window) {
-        var visible = {};
-        var observer = new IntersectionObserver(function (entries) {
-            entries.forEach(function (e) {
-                visible[e.target.id] = e.isIntersecting;
-            });
-            // Pick the first visible card in document order.
-            var activeId = null;
+    if (cards.length > 0) {
+        var lis = document.querySelectorAll('.file-list li');
+        var currentActiveId = null;
+        var updateActive = function () {
+            var offset = (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--summary-height')) || 0) + 1;
+            var activeId = cards[0].id;
             for (var i = 0; i < cards.length; i++) {
-                if (visible[cards[i].id]) { activeId = cards[i].id; break; }
+                if (cards[i].getBoundingClientRect().top <= offset) activeId = cards[i].id;
+                else break;
             }
-            document.querySelectorAll('.file-list li').forEach(function (li) {
+            if (activeId === currentActiveId) return;
+            currentActiveId = activeId;
+            lis.forEach(function (li) {
                 li.classList.toggle('active', li.getAttribute('data-target') === activeId);
             });
-        }, { rootMargin: '-60px 0px -60% 0px' });
-        cards.forEach(function (c) { observer.observe(c); });
+        };
+        var ticking = false;
+        var onScroll = function () {
+            if (ticking) return;
+            ticking = true;
+            requestAnimationFrame(function () { ticking = false; updateActive(); });
+        };
+        window.addEventListener('scroll', onScroll, { passive: true });
+        window.addEventListener('resize', onScroll);
+        updateActive();
     }
 
     // ----- Sidebar show/hide (persisted).
@@ -1375,7 +1390,7 @@ cat <<'HTML_FOOT'
                     var hiddenGroup = rows.slice(start, k);
                     var ph = document.createElement('tr');
                     ph.className = 'collapse-placeholder';
-                    ph.innerHTML = '<td colspan="' + cols + '">&hellip; ' + count + ' unchanged line' + (count === 1 ? '' : 's') + ' (click to expand)</td>';
+                    ph.innerHTML = '<td colspan="' + cols + '"><span class="cph-text">&hellip; ' + count + ' unchanged line' + (count === 1 ? '' : 's') + ' (click to expand)</span></td>';
                     (function (group, placeholder) {
                         placeholder.addEventListener('click', function () {
                             group.forEach(function (r) {
