@@ -22,7 +22,9 @@ No dependencies beyond `git` and `bash`.
 - **Collapse unchanged** -- fold long unchanged regions, toggle in the browser or via CLI
 - **Whitespace markers** -- visualize spaces/tabs, toggle in the browser or via CLI
 - **Commit log** -- shows commit SHAs, messages, authors, and dates
+- **Per-commit navigation** -- click a commit to view its diff alone, or "All commits" for the whole range
 - **Full file or compact diff** -- use `-U` to control context lines
+- **Work in progress** -- diff uncommitted changes with `--working`, `--staged` or `--unstaged` (untracked files included)
 
 ## Installation
 
@@ -41,6 +43,13 @@ chmod +x git_diff_to_html.sh
 ```bash
 # Last commit, full file context
 git_diff_to_html.sh
+
+# Current work in progress (staged + unstaged + untracked, vs HEAD)
+git_diff_to_html.sh --working
+
+# Only what is staged / only what is not staged yet
+git_diff_to_html.sh --staged
+git_diff_to_html.sh --unstaged
 
 # Specific range
 git_diff_to_html.sh HEAD~5..HEAD
@@ -62,6 +71,10 @@ git_diff_to_html.sh abc1234
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `-w, --working` | Diff uncommitted changes (staged + unstaged) against `HEAD` | |
+| `--staged`, `--cached` | Diff staged changes only (index vs `HEAD`) | |
+| `--unstaged` | Diff unstaged changes only (work tree vs index) | |
+| `--untracked STATE` | Include untracked files (`--working` / `--unstaged`): `on` or `off` | `on` |
 | `-o, --output FILE` | Output HTML file | `git-diff.html` |
 | `-t, --title TEXT` | Page title | `Git Diff: <range>` |
 | `-U, --unified N` | Context lines around each change | Full file |

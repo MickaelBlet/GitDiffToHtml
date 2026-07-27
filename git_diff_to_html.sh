@@ -8,6 +8,14 @@
 #   git_diff_to_html.sh [options] [<commit-range>]
 #
 # Options:
+#   -w, --working        Diff the current work in progress: everything not yet
+#                        committed (staged + unstaged), compared to HEAD.
+#                        Untracked files are included too.
+#       --staged         Diff only the staged changes (index vs HEAD).
+#       --unstaged       Diff only the unstaged changes (work tree vs index),
+#                        including untracked files.
+#       --untracked ST   Include untracked files: "on" (default) or "off".
+#                        Only meaningful with --working / --unstaged.
 #   -o, --output FILE    Output HTML file (default: git-diff.html)
 #   -t, --title  TEXT    Page title (default: "Git Diff: <range>")
 #   -U, --unified N      Number of context lines around each change.
@@ -31,6 +39,8 @@
 #
 # Examples:
 #   git_diff_to_html.sh                          # last commit, full files
+#   git_diff_to_html.sh --working                # current work in progress
+#   git_diff_to_html.sh --staged                 # what would be committed
 #   git_diff_to_html.sh HEAD~5..HEAD
 #   git_diff_to_html.sh -o review.html main..feature
 #   git_diff_to_html.sh -U 3 HEAD~1..HEAD        # compact 3-line context
@@ -47,13 +57,36 @@ VIEW_MODE="unified"
 THEME="light"
 WHITESPACE="on"
 COLLAPSE="on"
+SOURCE_MODE="range"   # range | working | staged | unstaged
+UNTRACKED="on"
 
 usage() {
-    sed -n '3,37p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,48p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+set_source_mode() {
+    if [[ "$SOURCE_MODE" != "range" && "$SOURCE_MODE" != "$1" ]]; then
+        echo "Error: --working, --staged and --unstaged are mutually exclusive" >&2
+        exit 2
+    fi
+    SOURCE_MODE="$1"
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -w|--working)
+            set_source_mode working; shift ;;
+        --staged|--cached)
+            set_source_mode staged; shift ;;
+        --unstaged)
+            set_source_mode unstaged; shift ;;
+        --untracked)
+            [[ $# -ge 2 ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
+            case "$2" in
+                on|off) UNTRACKED="$2" ;;
+                *) echo "Error: --untracked expects 'on' or 'off'" >&2; exit 2 ;;
+            esac
+            shift 2 ;;
         -o|--output)
             [[ $# -ge 2 ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
             OUTPUT="$2"; shift 2 ;;
@@ -119,39 +152,94 @@ if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
     exit 1
 fi
 
-# Resolve default range: the last commit.
-if [[ -z "$RANGE" ]]; then
-    if git rev-parse --verify -q HEAD~1 >/dev/null 2>&1; then
-        RANGE="HEAD~1..HEAD"
-    else
-        RANGE="HEAD"
-    fi
-fi
+TOPLEVEL=$(git rev-parse --show-toplevel)
 
-# Build the actual diff range. A single commit becomes <commit>^..<commit>
-# (or empty-tree..<commit> for the root commit). Explicit A..B stays as-is.
-if [[ "$RANGE" == *..* ]]; then
-    DIFF_RANGE="$RANGE"
-else
-    if ! git rev-parse --verify -q "$RANGE" >/dev/null 2>&1; then
-        echo "Error: invalid revision '$RANGE'" >&2
+# DIFF_ARGS holds the revision selector passed to `git diff`; it stays empty
+# for the "unstaged" mode (work tree vs index).
+DIFF_ARGS=()
+SHOW_UNTRACKED="off"
+
+if [[ "$SOURCE_MODE" == "range" ]]; then
+    # Resolve default range: the last commit.
+    if [[ -z "$RANGE" ]]; then
+        if git rev-parse --verify -q HEAD~1 >/dev/null 2>&1; then
+            RANGE="HEAD~1..HEAD"
+        else
+            RANGE="HEAD"
+        fi
+    fi
+
+    # Build the actual diff range. A single commit becomes <commit>^..<commit>
+    # (or empty-tree..<commit> for the root commit). Explicit A..B stays as-is.
+    if [[ "$RANGE" == *..* ]]; then
+        DIFF_RANGE="$RANGE"
+    else
+        if ! git rev-parse --verify -q "$RANGE" >/dev/null 2>&1; then
+            echo "Error: invalid revision '$RANGE'" >&2
+            exit 1
+        fi
+        if git rev-parse --verify -q "${RANGE}^" >/dev/null 2>&1; then
+            DIFF_RANGE="${RANGE}^..${RANGE}"
+        else
+            EMPTY_TREE=$(git hash-object -t tree /dev/null)
+            DIFF_RANGE="${EMPTY_TREE}..${RANGE}"
+        fi
+    fi
+
+    # Validate the effective diff range.
+    if ! git rev-list "$DIFF_RANGE" >/dev/null 2>&1; then
+        echo "Error: invalid commit range '$RANGE'" >&2
         exit 1
     fi
-    if git rev-parse --verify -q "${RANGE}^" >/dev/null 2>&1; then
-        DIFF_RANGE="${RANGE}^..${RANGE}"
-    else
-        EMPTY_TREE=$(git hash-object -t tree /dev/null)
-        DIFF_RANGE="${EMPTY_TREE}..${RANGE}"
-    fi
-fi
 
-# Validate the effective diff range.
-if ! git rev-list "$DIFF_RANGE" >/dev/null 2>&1; then
-    echo "Error: invalid commit range '$RANGE'" >&2
-    exit 1
+    DIFF_ARGS=("$DIFF_RANGE")
+else
+    if [[ -n "$RANGE" ]]; then
+        echo "Error: a commit range cannot be combined with --working / --staged / --unstaged" >&2
+        exit 2
+    fi
+
+    # Compare against HEAD, or against the empty tree in a repo with no commit.
+    if git rev-parse --verify -q HEAD >/dev/null 2>&1; then
+        BASE_REV="HEAD"
+    else
+        BASE_REV=$(git hash-object -t tree /dev/null)
+    fi
+
+    case "$SOURCE_MODE" in
+        working)
+            RANGE="working tree (uncommitted)"
+            DIFF_ARGS=("$BASE_REV")
+            SHOW_UNTRACKED="$UNTRACKED" ;;
+        staged)
+            RANGE="staged changes"
+            DIFF_ARGS=(--cached "$BASE_REV") ;;
+        unstaged)
+            RANGE="unstaged changes"
+            SHOW_UNTRACKED="$UNTRACKED" ;;
+    esac
 fi
 
 TITLE="${TITLE:-Git Diff: $RANGE}"
+
+# ---------- untracked files ----------
+
+# `git diff` never reports untracked files, so build a synthetic "new file"
+# diff for each of them with `git diff --no-index` against /dev/null.
+UNTRACKED_DIFF=""
+UNTRACKED_COUNT=0
+UNTRACKED_LINES=0
+if [[ "$SHOW_UNTRACKED" == "on" ]]; then
+    while IFS= read -r -d '' f; do
+        d=$(git -C "$TOPLEVEL" diff --no-color --unified="$CONTEXT_LINES" \
+                --no-index -- /dev/null "$f" 2>/dev/null || true)
+        [[ -z "$d" ]] && continue
+        UNTRACKED_DIFF+="$d"$'\n'
+        UNTRACKED_COUNT=$((UNTRACKED_COUNT + 1))
+        UNTRACKED_LINES=$((UNTRACKED_LINES + $(printf '%s\n' "$d" |
+            awk '/^@@/ { in_hunk = 1; next } in_hunk && /^\+/ { n++ } END { print n + 0 }')))
+    done < <(git -C "$TOPLEVEL" ls-files -z --others --exclude-standard)
+fi
 
 # ---------- helpers ----------
 
@@ -169,7 +257,7 @@ html_escape() {
 
 REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
 GEN_DATE=$(date '+%Y-%m-%d %H:%M:%S %z')
-SHORTSTAT=$(git diff --shortstat "$DIFF_RANGE" 2>/dev/null || true)
+SHORTSTAT=$(git diff --shortstat ${DIFF_ARGS[@]+"${DIFF_ARGS[@]}"} 2>/dev/null || true)
 
 # Parse shortstat: "  N files changed, N insertions(+), N deletions(-)"
 FILES_CHANGED=0
@@ -183,6 +271,10 @@ if [[ -n "$SHORTSTAT" ]]; then
     INSERTIONS=${INSERTIONS:-0}
     DELETIONS=${DELETIONS:-0}
 fi
+
+# Untracked files are not part of the shortstat: add them by hand.
+FILES_CHANGED=$((FILES_CHANGED + UNTRACKED_COUNT))
+INSERTIONS=$((INSERTIONS + UNTRACKED_LINES))
 
 # ---------- write the HTML ----------
 
@@ -580,10 +672,22 @@ body.theme-dark #theme-toggle .sun  { display: inline; }
 .commit-list .row {
     display: flex;
     gap: 12px;
-    padding: 4px 0;
+    padding: 4px 8px;
+    margin: 0 -8px;
     font-size: 13px;
     align-items: baseline;
+    border-radius: 3px;
+    border-left: 3px solid transparent;
 }
+.commit-list .row.clickable { cursor: pointer; }
+.commit-list .row.clickable:hover { background: var(--file-header-hover); }
+.commit-list .row.active {
+    background: var(--file-header-hover);
+    border-left-color: var(--accent);
+}
+.commit-list .row.all .sha { color: var(--muted); font-style: italic; }
+.diff-set { display: none; }
+.diff-set.active { display: block; }
 .commit-list .sha {
     font-family: Menlo, Consolas, "Courier New", monospace;
     color: var(--accent);
@@ -808,7 +912,7 @@ tr.flash > td {
 <h1>$(html_escape "$TITLE")</h1>
 <div class="meta">
     Repository: <b>$(html_escape "$REPO_NAME")</b>
-    &middot; Range: <code>$(html_escape "$RANGE")</code>
+    &middot; $([ "$SOURCE_MODE" = "range" ] && echo -n Range || echo -n Scope): <code>$(html_escape "$RANGE")</code>
     &middot; Generated: $(html_escape "$GEN_DATE")
 </div>
 </header>
@@ -847,17 +951,38 @@ tr.flash > td {
 HTML_HEAD
 
 # ----- commit list -----
-if [[ "$RANGE" == *..* ]]; then
+LOG_OUTPUT=""
+if [[ "$SOURCE_MODE" != "range" ]]; then
+    LOG_OUTPUT=""
+elif [[ "$RANGE" == *..* ]]; then
     LOG_OUTPUT=$(git log --pretty=format:'%h%x1f%an%x1f%ad%x1f%s' --date=short "$RANGE" 2>/dev/null || true)
 else
     LOG_OUTPUT=$(git log -1 --pretty=format:'%h%x1f%an%x1f%ad%x1f%s' --date=short "$RANGE" 2>/dev/null || true)
 fi
 
+# Collect the commit SHAs so each one can get its own selectable diff.
+COMMIT_SHAS=()
+if [[ -n "$LOG_OUTPUT" ]]; then
+    while IFS=$'\x1f' read -r sha _rest; do
+        [[ -n "$sha" ]] && COMMIT_SHAS+=("$sha")
+    done <<< "$LOG_OUTPUT"
+fi
+
+# Per-commit navigation only makes sense when the range holds several commits.
+PER_COMMIT="off"
+[[ ${#COMMIT_SHAS[@]} -gt 1 ]] && PER_COMMIT="on"
+
 if [[ -n "$LOG_OUTPUT" ]]; then
     echo '<section class="commit-list">'
+    if [[ "$PER_COMMIT" == "on" ]]; then
+        printf '        <div class="row clickable all active" data-set="all"><span class="sha">all</span><span class="subject">All %d commits</span><span class="author"></span><span class="date"></span></div>\n' \
+            "${#COMMIT_SHAS[@]}"
+    fi
     while IFS=$'\x1f' read -r sha author adate subject; do
         [[ -z "$sha" ]] && continue
-        printf '        <div class="row"><span class="sha">%s</span><span class="subject">%s</span><span class="author">%s</span><span class="date">%s</span></div>\n' \
+        printf '        <div class="row%s"%s><span class="sha">%s</span><span class="subject">%s</span><span class="author">%s</span><span class="date">%s</span></div>\n' \
+            "$([ "$PER_COMMIT" = "on" ] && echo -n ' clickable')" \
+            "$([ "$PER_COMMIT" = "on" ] && printf ' data-set="%s"' "$(html_escape "$sha")")" \
             "$(html_escape "$sha")" \
             "$(html_escape "$subject")" \
             "$(html_escape "$author")" \
@@ -867,12 +992,20 @@ if [[ -n "$LOG_OUTPUT" ]]; then
 fi
 
 # ----- diff body -----
-DIFF_OUTPUT=$(git diff --no-color --unified="$CONTEXT_LINES" "$DIFF_RANGE" 2>/dev/null || true)
+DIFF_OUTPUT=$(git diff --no-color --unified="$CONTEXT_LINES" ${DIFF_ARGS[@]+"${DIFF_ARGS[@]}"} 2>/dev/null || true)
 
-if [[ -z "$DIFF_OUTPUT" ]]; then
-    echo '<div class="empty">No changes in this range.</div>'
-else
-    printf '%s\n' "$DIFF_OUTPUT" | awk '
+if [[ -n "$UNTRACKED_DIFF" ]]; then
+    DIFF_OUTPUT="${DIFF_OUTPUT:+$DIFF_OUTPUT$'\n'}${UNTRACKED_DIFF%$'\n'}"
+fi
+
+# Turn a raw unified diff into the file-card markup. $1 is the diff text,
+# $2 a prefix making the generated element ids unique across diff sets.
+render_diff_html() {
+    if [[ -z "$1" ]]; then
+        echo '<div class="empty">No changes in this range.</div>'
+        return
+    fi
+    printf '%s\n' "$1" | awk -v prefix="$2" '
     function esc(s) {
         gsub(/&/, "\\&amp;", s)
         gsub(/</, "\\&lt;",  s)
@@ -883,7 +1016,7 @@ else
         path = file_new
         if (file_status == "deleted") path = file_old
         if (file_status == "renamed" || file_status == "copied") path = file_old " → " file_new
-        printf "<div class=\"file-card\" id=\"file-%d\">", file_counter
+        printf "<div class=\"file-card\" id=\"%s-file-%d\">", prefix, file_counter
         printf "<div class=\"file-header\"><span class=\"status %s\">%s</span><span class=\"path\">%s</span><span class=\"toggle\">collapse</span></div>", file_status, file_status, esc(path)
         printf "<div class=\"diff-body\"><table class=\"diff-table unified\"><tbody>\n"
         file_opened = 1
@@ -965,7 +1098,30 @@ else
     }
     END { flush_file() }
     '
+}
+
+echo '<div class="diff-sets">'
+if [[ "$PER_COMMIT" == "on" ]]; then
+    printf '<div class="diff-set active" data-set="all">\n'
+    render_diff_html "$DIFF_OUTPUT" "all"
+    printf '</div>\n'
+    for sha in "${COMMIT_SHAS[@]}"; do
+        if git rev-parse --verify -q "${sha}^" >/dev/null 2>&1; then
+            crange="${sha}^..${sha}"
+        else
+            crange="$(git hash-object -t tree /dev/null)..${sha}"
+        fi
+        cdiff=$(git diff --no-color --unified="$CONTEXT_LINES" "$crange" 2>/dev/null || true)
+        printf '<div class="diff-set" data-set="%s">\n' "$(html_escape "$sha")"
+        render_diff_html "$cdiff" "c${sha}"
+        printf '</div>\n'
+    done
+else
+    printf '<div class="diff-set active" data-set="all">\n'
+    render_diff_html "$DIFF_OUTPUT" "all"
+    printf '</div>\n'
 fi
+echo '</div>'
 
 cat <<'HTML_FOOT'
 </main>
@@ -997,13 +1153,20 @@ cat <<'HTML_FOOT'
     // ----- Populate the sidebar file list (BEFORE SbS is built,
     //       so tr.add / tr.del counts come only from the unified table).
     var fileList = document.getElementById('file-list');
-    var cards = document.querySelectorAll('.file-card');
+    var cards = [];
+    var lis = [];
+    function activeSet() {
+        return document.querySelector('.diff-set.active') || document;
+    }
+    function buildSidebar() {
+    fileList.innerHTML = '';
+    cards = Array.prototype.slice.call(activeSet().querySelectorAll('.file-card'));
     cards.forEach(function (card) {
         var statusEl = card.querySelector('.file-header .status');
         var status = statusEl ? (statusEl.classList[1] || 'modified') : 'modified';
         var path = (card.querySelector('.file-header .path') || {}).textContent || '';
-        var adds = card.querySelectorAll('tr.add').length;
-        var dels = card.querySelectorAll('tr.del').length;
+        var adds = card.querySelectorAll('table.unified tr.add').length;
+        var dels = card.querySelectorAll('table.unified tr.del').length;
 
         // Split path into directory and basename.
         var base = path, dir = '';
@@ -1043,34 +1206,39 @@ cat <<'HTML_FOOT'
         });
         fileList.appendChild(li);
     });
+    lis = Array.prototype.slice.call(fileList.querySelectorAll('li'));
+    applyFilter();
+    var header = document.querySelector('.sidebar-header span');
+    if (header) header.textContent = 'Files (' + cards.length + ')';
+    currentActiveId = null;
+    updateActive();
+    }
 
     // Highlight the currently-visible file in the sidebar.
-    if (cards.length > 0) {
-        var lis = document.querySelectorAll('.file-list li');
-        var currentActiveId = null;
-        var updateActive = function () {
-            var offset = (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--summary-height')) || 0) + 1;
-            var activeId = cards[0].id;
-            for (var i = 0; i < cards.length; i++) {
-                if (cards[i].getBoundingClientRect().top <= offset) activeId = cards[i].id;
-                else break;
-            }
-            if (activeId === currentActiveId) return;
-            currentActiveId = activeId;
-            lis.forEach(function (li) {
-                li.classList.toggle('active', li.getAttribute('data-target') === activeId);
-            });
-        };
-        var ticking = false;
-        var onScroll = function () {
-            if (ticking) return;
-            ticking = true;
-            requestAnimationFrame(function () { ticking = false; updateActive(); });
-        };
-        window.addEventListener('scroll', onScroll, { passive: true });
-        window.addEventListener('resize', onScroll);
-        updateActive();
+    var currentActiveId = null;
+    function updateActive() {
+        if (cards.length === 0) return;
+        var offset = (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--summary-height')) || 0) + 1;
+        var activeId = cards[0].id;
+        for (var i = 0; i < cards.length; i++) {
+            if (cards[i].getBoundingClientRect().top <= offset) activeId = cards[i].id;
+            else break;
+        }
+        if (activeId === currentActiveId) return;
+        currentActiveId = activeId;
+        lis.forEach(function (li) {
+            li.classList.toggle('active', li.getAttribute('data-target') === activeId);
+        });
     }
+    var ticking = false;
+    var onScroll = function () {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(function () { ticking = false; updateActive(); });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    buildSidebar();
 
     // ----- Sidebar show/hide (persisted).
     var hideBtn = document.getElementById('sidebar-hide');
@@ -1087,15 +1255,14 @@ cat <<'HTML_FOOT'
 
     // ----- Sidebar file filter.
     var filterInput = document.getElementById('file-filter');
-    if (filterInput) {
-        filterInput.addEventListener('input', function () {
-            var q = filterInput.value.toLowerCase();
-            document.querySelectorAll('.file-list li').forEach(function (li) {
-                var match = !q || (li.title || '').toLowerCase().indexOf(q) >= 0;
-                li.classList.toggle('hidden', !match);
-            });
+    function applyFilter() {
+        var q = filterInput ? filterInput.value.toLowerCase() : '';
+        fileList.querySelectorAll('li').forEach(function (li) {
+            var match = !q || (li.title || '').toLowerCase().indexOf(q) >= 0;
+            li.classList.toggle('hidden', !match);
         });
     }
+    if (filterInput) filterInput.addEventListener('input', applyFilter);
 
     // ----- Build the side-by-side table for each unified table.
     function mkTd(cls, html) {
@@ -1522,7 +1689,7 @@ cat <<'HTML_FOOT'
         var sel = (currentView === 'split')
             ? 'table.diff-table.sbs > tbody > tr'
             : 'table.diff-table.unified > tbody > tr';
-        var rows = Array.prototype.slice.call(document.querySelectorAll(sel));
+        var rows = Array.prototype.slice.call(activeSet().querySelectorAll(sel));
         groups = [];
         for (var i = 0; i < rows.length; i++) {
             if (isChange(rows[i])) {
@@ -1566,6 +1733,38 @@ cat <<'HTML_FOOT'
             goTo(e.shiftKey ? (idx < 0 ? groups.length - 1 : idx - 1) : (idx + 1));
         }
     });
+
+    // ----- Commit navigation: each commit row shows only its own diff.
+    var commitRows = document.querySelectorAll('.commit-list .row.clickable');
+    var statFiles = document.querySelector('.summary .stats span:nth-child(1)');
+    var statAdd = document.querySelector('.summary .stats .add');
+    var statDel = document.querySelector('.summary .stats .del');
+    function updateStats(set) {
+        var n = set.querySelectorAll('.file-card').length;
+        var a = set.querySelectorAll('table.unified tr.add').length;
+        var d = set.querySelectorAll('table.unified tr.del').length;
+        if (statFiles) statFiles.innerHTML = '<b>' + n + '</b> file' + (n === 1 ? '' : 's') + ' changed';
+        if (statAdd) statAdd.innerHTML = '<b>+' + a + '</b> insertion' + (a === 1 ? '' : 's');
+        if (statDel) statDel.innerHTML = '<b>&minus;' + d + '</b> deletion' + (d === 1 ? '' : 's');
+    }
+    function setActiveSet(name) {
+        var target = document.querySelector('.diff-set[data-set="' + name + '"]');
+        if (!target) return;
+        document.querySelectorAll('.diff-set').forEach(function (s) {
+            s.classList.toggle('active', s === target);
+        });
+        commitRows.forEach(function (r) {
+            r.classList.toggle('active', r.getAttribute('data-set') === name);
+        });
+        updateStats(target);
+        buildSidebar();
+        rebuildGroups();
+        window.scrollTo({ top: 0 });
+    }
+    commitRows.forEach(function (r) {
+        r.addEventListener('click', function () { setActiveSet(r.getAttribute('data-set')); });
+    });
+    if (commitRows.length) updateStats(activeSet());
 
     rebuildGroups();
 
