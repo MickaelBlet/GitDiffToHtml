@@ -30,6 +30,11 @@
 #                        A toggle is always present in the page.
 #       --collapse ST    Initial collapse-unchanged: "on" (default) or "off".
 #                        A toggle is always present in the page.
+#       --colorblind ST  Initial colorblind-safe palette: "on" or "off"
+#                        (default). Replaces the green/red add/delete colors
+#                        with a blue/orange pair readable with deuteranopia
+#                        or protanopia, in both the light and dark themes.
+#                        A toggle is always present in the page.
 #   -h, --help           Show this help message and exit
 #
 # Arguments:
@@ -57,6 +62,7 @@ VIEW_MODE="unified"
 THEME="light"
 WHITESPACE="on"
 COLLAPSE="on"
+COLORBLIND="off"
 SOURCE_MODE="range"   # range | working | staged | unstaged
 UNTRACKED="on"
 
@@ -125,6 +131,13 @@ while [[ $# -gt 0 ]]; do
             case "$2" in
                 on|off) COLLAPSE="$2" ;;
                 *) echo "Error: --collapse expects 'on' or 'off'" >&2; exit 2 ;;
+            esac
+            shift 2 ;;
+        --colorblind)
+            [[ $# -ge 2 ]] || { echo "Error: $1 requires an argument" >&2; exit 2; }
+            case "$2" in
+                on|off) COLORBLIND="$2" ;;
+                *) echo "Error: --colorblind expects 'on' or 'off'" >&2; exit 2 ;;
             esac
             shift 2 ;;
         -h|--help)
@@ -276,6 +289,70 @@ fi
 FILES_CHANGED=$((FILES_CHANGED + UNTRACKED_COUNT))
 INSERTIONS=$((INSERTIONS + UNTRACKED_LINES))
 
+# ---------- commit list ----------
+
+# Built before the page so it can be embedded in the sidebar.
+LOG_OUTPUT=""
+# "on" when the range is written backwards (B..A): the diff then undoes the
+# commits, so each per-commit diff has to be reversed as well.
+REVERSED="off"
+if [[ "$SOURCE_MODE" != "range" ]]; then
+    LOG_OUTPUT=""
+elif [[ "$RANGE" == *..* ]]; then
+    LOG_OUTPUT=$(git log --pretty=format:'%h%x1f%an%x1f%ad%x1f%s' --date=short "$RANGE" 2>/dev/null || true)
+    if [[ -z "$LOG_OUTPUT" && "$RANGE" != *...* ]]; then
+        # A reversed range (e.g. HEAD..HEAD~5) lists no commits; log the other
+        # way round so the page still shows what the diff undoes.
+        LOG_OUTPUT=$(git log --pretty=format:'%h%x1f%an%x1f%ad%x1f%s' --date=short \
+            "${RANGE#*..}..${RANGE%%..*}" 2>/dev/null || true)
+        [[ -n "$LOG_OUTPUT" ]] && REVERSED="on"
+    fi
+else
+    LOG_OUTPUT=$(git log -1 --pretty=format:'%h%x1f%an%x1f%ad%x1f%s' --date=short "$RANGE" 2>/dev/null || true)
+fi
+
+# Collect the commit SHAs so each one can get its own selectable diff.
+COMMIT_SHAS=()
+if [[ -n "$LOG_OUTPUT" ]]; then
+    while IFS=$'\x1f' read -r sha _rest; do
+        [[ -n "$sha" ]] && COMMIT_SHAS+=("$sha")
+    done <<< "$LOG_OUTPUT"
+fi
+
+# Per-commit navigation only makes sense when the range holds several commits.
+PER_COMMIT="off"
+[[ ${#COMMIT_SHAS[@]} -gt 1 ]] && PER_COMMIT="on"
+
+COMMIT_HTML=""
+if [[ -n "$LOG_OUTPUT" ]]; then
+    # Note: a command substitution that fails would abort the script (set -e),
+    # so build the optional label with a plain if.
+    REV_LABEL=""
+    if [[ "$REVERSED" == "on" ]]; then
+        REV_LABEL=" &middot; reversed"
+    fi
+    COMMIT_HTML+='    <div class="sidebar-section-title">'
+    COMMIT_HTML+="<span>Commits (${#COMMIT_SHAS[@]})${REV_LABEL}</span>"
+    COMMIT_HTML+='</div>'$'\n'
+    COMMIT_HTML+='    <div class="commit-list">'$'\n'
+    if [[ "$PER_COMMIT" == "on" ]]; then
+        COMMIT_HTML+=$(printf '        <div class="row clickable all active" data-set="all"><span class="sha">all</span><span class="subject">All %d commits</span><span class="meta"></span></div>' \
+            "${#COMMIT_SHAS[@]}")$'\n'
+    fi
+    while IFS=$'\x1f' read -r sha author adate subject; do
+        [[ -z "$sha" ]] && continue
+        COMMIT_HTML+=$(printf '        <div class="row%s"%s title="%s"><span class="sha">%s</span><span class="subject">%s</span><span class="meta"><span class="author">%s</span><span class="date">%s</span></span></div>' \
+            "$([ "$PER_COMMIT" = "on" ] && echo -n ' clickable')" \
+            "$([ "$PER_COMMIT" = "on" ] && printf ' data-set="%s"' "$(html_escape "$sha")")" \
+            "$(html_escape "$subject")" \
+            "$(html_escape "$sha")" \
+            "$(html_escape "$subject")" \
+            "$(html_escape "$author")" \
+            "$(html_escape "$adate")")$'\n'
+    done <<< "$LOG_OUTPUT"
+    COMMIT_HTML+='    </div>'
+fi
+
 # ---------- write the HTML ----------
 
 {
@@ -366,6 +443,32 @@ body.theme-dark {
     --syn-tag:     #7ee787;
     --syn-attr:    #d2a8ff;
 }
+/* Colorblind-safe palette (Okabe-Ito blue / vermillion) applied on top of
+   whichever theme is active: additions turn blue, deletions orange. */
+body.colorblind {
+    --add-bg: #e8f1fb;
+    --add-ln-bg: #cfe2f7;
+    --add-text: #0b4f8a;
+    --del-bg: #fdf1e5;
+    --del-ln-bg: #fadcc0;
+    --del-text: #8f4300;
+    --status-added: #0072b2;
+    --status-deleted: #d55e00;
+    --status-modified: #6f42c1;
+    --status-renamed: #8f4300;
+}
+body.theme-dark.colorblind {
+    --add-bg: #08192b;
+    --add-ln-bg: #0d3054;
+    --add-text: #79c0ff;
+    --del-bg: #2a1607;
+    --del-ln-bg: #4d2708;
+    --del-text: #ffa657;
+    --status-added: #1f6feb;
+    --status-deleted: #e08a3c;
+    --status-modified: #a371f7;
+    --status-renamed: #e08a3c;
+}
 .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-section, .hljs-link,
 .hljs-meta-keyword, .hljs-doctag { color: var(--syn-keyword); }
 .hljs-string, .hljs-symbol, .hljs-bullet, .hljs-addition,
@@ -420,7 +523,7 @@ header.top .meta code {
     position: sticky;
     top: 0;
     height: 100vh;
-    overflow-y: auto;
+    overflow: hidden;
     background: var(--card-bg);
     border-right: 1px solid var(--border);
     font-size: 13px;
@@ -428,8 +531,7 @@ header.top .meta code {
     flex-direction: column;
 }
 .sidebar-header {
-    position: sticky;
-    top: 0;
+    flex: 0 0 auto;
     background: var(--card-bg);
     border-bottom: 1px solid var(--border);
     padding: 12px 14px 8px;
@@ -453,12 +555,21 @@ header.top .meta code {
     line-height: 1;
 }
 .sidebar-header button:hover { color: var(--text); }
+.sidebar-section-title {
+    flex: 0 0 auto;
+    padding: 10px 14px 6px;
+    border-top: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+}
+.sidebar-header + .sidebar-section-title { border-top: none; }
 .sidebar-filter {
-    padding: 10px 8px;
-    position: sticky;
-    top: 38px;
+    flex: 0 0 auto;
+    padding: 0 8px 8px;
     background: var(--card-bg);
-    z-index: 1;
 }
 .sidebar-filter input {
     width: 100%;
@@ -477,7 +588,8 @@ header.top .meta code {
     list-style: none;
     margin: 0;
     padding: 2px 0;
-    flex: 1;
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
 }
 .file-list li {
@@ -661,22 +773,40 @@ body.theme-dark #theme-toggle .sun  { display: inline; }
 }
 .ws-toggle:hover { background: var(--file-header-hover); }
 .ws-toggle input { margin: 0; cursor: pointer; }
-.ws-mark { color: var(--muted); opacity: 0.65; }
+/* Whitespace markers are drawn as overlays so the real space/tab characters
+   stay in the DOM and survive a copy/paste of the selection. */
+.ws-mark { position: relative; }
+.ws-mark::before {
+    position: absolute;
+    left: 0;
+    top: 0;
+    color: var(--muted);
+    opacity: 0.65;
+    pointer-events: none;
+}
+.ws-mark.ws-sp::before  { content: "\00B7"; }
+.ws-mark.ws-tab::before { content: "\2192"; }
+/* Diff prefix column (+/-/space): visible, never part of a copy. */
+.pfx { user-select: none; -webkit-user-select: none; }
+/* Split view: a selection started in one pane cannot reach the other. */
+body.sel-l table.diff-table.sbs td.side-r,
+body.sel-r table.diff-table.sbs td.side-l {
+    user-select: none;
+    -webkit-user-select: none;
+}
 .commit-list {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 10px 18px;
-    margin-bottom: 20px;
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: 35vh;
+    overflow-y: auto;
 }
 .commit-list .row {
     display: flex;
-    gap: 12px;
-    padding: 4px 8px;
-    margin: 0 -8px;
-    font-size: 13px;
+    flex-wrap: wrap;
     align-items: baseline;
-    border-radius: 3px;
+    row-gap: 1px;
+    padding: 5px 12px;
+    font-size: 12px;
     border-left: 3px solid transparent;
 }
 .commit-list .row.clickable { cursor: pointer; }
@@ -685,18 +815,51 @@ body.theme-dark #theme-toggle .sun  { display: inline; }
     background: var(--file-header-hover);
     border-left-color: var(--accent);
 }
+/* Pinned to the top of the commit list so "all commits" is always reachable. */
+.commit-list .row.all {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--card-bg);
+    box-shadow: 0 1px 0 var(--border);
+}
+.commit-list .row.all.active { background: var(--file-header-hover); }
 .commit-list .row.all .sha { color: var(--muted); font-style: italic; }
 .diff-set { display: none; }
 .diff-set.active { display: block; }
 .commit-list .sha {
+    flex: 0 0 auto;
+    margin-right: 8px;
     font-family: Menlo, Consolas, "Courier New", monospace;
     color: var(--accent);
-    flex: 0 0 auto;
-    min-width: 70px;
 }
-.commit-list .subject { flex: 1; color: var(--text); }
-.commit-list .author { color: var(--muted); font-size: 12px; }
-.commit-list .date { color: var(--muted); font-size: 12px; }
+.commit-list .subject {
+    flex: 1 1 0;
+    min-width: 0;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* Forced onto its own line by the 100% basis. */
+.commit-list .meta {
+    flex: 1 1 100%;
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    font-size: 10px;
+    color: var(--muted);
+}
+.commit-list .author {
+    flex: 1 1 auto;
+    margin-right: 8px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.commit-list .date { flex: 0 0 auto; }
+.commit-list .row.all .meta { display: none; }
 .file-card {
     background: var(--card-bg);
     border: 1px solid var(--border);
@@ -746,7 +909,7 @@ body.theme-dark #theme-toggle .sun  { display: inline; }
     font-size: 11px;
     flex: 0 0 auto;
 }
-.diff-body { overflow-x: auto; max-width: 100%; }
+.diff-body { overflow-x: auto; overflow-y: hidden; max-width: 100%; }
 table.diff-table {
     border-collapse: collapse;
     width: 100%;
@@ -770,7 +933,12 @@ td.ln {
     user-select: none;
     overflow: hidden;
 }
-td.code { width: 100%; }
+table.diff-table td.code {
+    width: 100%;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
 tr.ctx td.code { color: var(--text); }
 tr.add td       { background: var(--add-bg); }
 tr.add td.ln    { background: var(--add-ln-bg); color: var(--add-text); }
@@ -869,6 +1037,8 @@ footer a { color: var(--muted); }
     text-align: center;
     font-size: 12px;
 }
+/* Hiding collapsed context via a class avoids per-row inline style writes. */
+tr.ctx-hidden { display: none; }
 tr.collapse-placeholder td {
     background: var(--hunk-bg);
     color: var(--hunk-color);
@@ -894,13 +1064,17 @@ tr.flash > td {
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 </head>
-<body class="$([ "$THEME" = "dark" ] && echo -n "theme-dark ")$([ "$VIEW_MODE" = "split" ] && echo -n "view-split ")" data-initial-view="$(html_escape "$VIEW_MODE")" data-initial-theme="$(html_escape "$THEME")" data-initial-ws="$(html_escape "$WHITESPACE")" data-initial-collapse="$(html_escape "$COLLAPSE")">
+<body class="$([ "$THEME" = "dark" ] && echo -n "theme-dark ")$([ "$VIEW_MODE" = "split" ] && echo -n "view-split ")$([ "$COLORBLIND" = "on" ] && echo -n "colorblind ")" data-initial-view="$(html_escape "$VIEW_MODE")" data-initial-theme="$(html_escape "$THEME")" data-initial-ws="$(html_escape "$WHITESPACE")" data-initial-collapse="$(html_escape "$COLLAPSE")" data-initial-colorblind="$(html_escape "$COLORBLIND")">
 <button type="button" id="sidebar-show" title="Show files sidebar" aria-label="Show sidebar"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></button>
 <div class="layout">
-<aside class="sidebar" aria-label="Files">
+<aside class="sidebar" aria-label="Changes">
     <div class="sidebar-header">
-        <span>Files (${FILES_CHANGED})</span>
+        <span>Changes</span>
         <button type="button" id="sidebar-hide" title="Hide sidebar" aria-label="Hide sidebar">&times;</button>
+    </div>
+${COMMIT_HTML}
+    <div class="sidebar-section-title">
+        <span id="files-count">Files (${FILES_CHANGED})</span>
     </div>
     <div class="sidebar-filter">
         <input type="text" id="file-filter" placeholder="Filter files…" autocomplete="off" spellcheck="false">
@@ -942,6 +1116,10 @@ tr.flash > td {
                 <input type="checkbox" id="collapse-toggle">
                 <span>Collapse</span>
             </label>
+            <label class="ws-toggle" title="Colorblind-safe palette: blue additions / orange deletions instead of green / red">
+                <input type="checkbox" id="colorblind-toggle"$([ "$COLORBLIND" = "on" ] && echo -n ' checked')>
+                <span>Colorblind</span>
+            </label>
             <button type="button" id="theme-toggle" title="Toggle dark / light theme" aria-label="Toggle theme">
                 <span class="moon">&#9790;</span><span class="sun">&#9788;</span>
             </button>
@@ -949,47 +1127,6 @@ tr.flash > td {
     </div>
 </section>
 HTML_HEAD
-
-# ----- commit list -----
-LOG_OUTPUT=""
-if [[ "$SOURCE_MODE" != "range" ]]; then
-    LOG_OUTPUT=""
-elif [[ "$RANGE" == *..* ]]; then
-    LOG_OUTPUT=$(git log --pretty=format:'%h%x1f%an%x1f%ad%x1f%s' --date=short "$RANGE" 2>/dev/null || true)
-else
-    LOG_OUTPUT=$(git log -1 --pretty=format:'%h%x1f%an%x1f%ad%x1f%s' --date=short "$RANGE" 2>/dev/null || true)
-fi
-
-# Collect the commit SHAs so each one can get its own selectable diff.
-COMMIT_SHAS=()
-if [[ -n "$LOG_OUTPUT" ]]; then
-    while IFS=$'\x1f' read -r sha _rest; do
-        [[ -n "$sha" ]] && COMMIT_SHAS+=("$sha")
-    done <<< "$LOG_OUTPUT"
-fi
-
-# Per-commit navigation only makes sense when the range holds several commits.
-PER_COMMIT="off"
-[[ ${#COMMIT_SHAS[@]} -gt 1 ]] && PER_COMMIT="on"
-
-if [[ -n "$LOG_OUTPUT" ]]; then
-    echo '<section class="commit-list">'
-    if [[ "$PER_COMMIT" == "on" ]]; then
-        printf '        <div class="row clickable all active" data-set="all"><span class="sha">all</span><span class="subject">All %d commits</span><span class="author"></span><span class="date"></span></div>\n' \
-            "${#COMMIT_SHAS[@]}"
-    fi
-    while IFS=$'\x1f' read -r sha author adate subject; do
-        [[ -z "$sha" ]] && continue
-        printf '        <div class="row%s"%s><span class="sha">%s</span><span class="subject">%s</span><span class="author">%s</span><span class="date">%s</span></div>\n' \
-            "$([ "$PER_COMMIT" = "on" ] && echo -n ' clickable')" \
-            "$([ "$PER_COMMIT" = "on" ] && printf ' data-set="%s"' "$(html_escape "$sha")")" \
-            "$(html_escape "$sha")" \
-            "$(html_escape "$subject")" \
-            "$(html_escape "$author")" \
-            "$(html_escape "$adate")"
-    done <<< "$LOG_OUTPUT"
-    echo '</section>'
-fi
 
 # ----- diff body -----
 DIFF_OUTPUT=$(git diff --no-color --unified="$CONTEXT_LINES" ${DIFF_ARGS[@]+"${DIFF_ARGS[@]}"} 2>/dev/null || true)
@@ -1084,13 +1221,13 @@ render_diff_html() {
         c = substr($0, 1, 1)
         rest = substr($0, 2)
         if (c == " ") {
-            printf "<tr class=\"ctx\"><td class=\"ln\">%d</td><td class=\"ln\">%d</td><td class=\"code\"> %s</td></tr>\n", left_line, right_line, esc(rest)
+            printf "<tr class=\"ctx\"><td class=\"ln\">%d</td><td class=\"ln\">%d</td><td class=\"code\"><span class=\"pfx\"> </span>%s</td></tr>\n", left_line, right_line, esc(rest)
             left_line++; right_line++
         } else if (c == "-") {
-            printf "<tr class=\"del\"><td class=\"ln\">%d</td><td class=\"ln\"></td><td class=\"code\">-%s</td></tr>\n", left_line, esc(rest)
+            printf "<tr class=\"del\"><td class=\"ln\">%d</td><td class=\"ln\"></td><td class=\"code\"><span class=\"pfx\">-</span>%s</td></tr>\n", left_line, esc(rest)
             left_line++
         } else if (c == "+") {
-            printf "<tr class=\"add\"><td class=\"ln\"></td><td class=\"ln\">%d</td><td class=\"code\">+%s</td></tr>\n", right_line, esc(rest)
+            printf "<tr class=\"add\"><td class=\"ln\"></td><td class=\"ln\">%d</td><td class=\"code\"><span class=\"pfx\">+</span>%s</td></tr>\n", right_line, esc(rest)
             right_line++
         } else if (c == "\\") {
             printf "<tr class=\"nonewline\"><td class=\"ln\"></td><td class=\"ln\"></td><td class=\"code\">%s</td></tr>\n", esc($0)
@@ -1108,8 +1245,11 @@ if [[ "$PER_COMMIT" == "on" ]]; then
     for sha in "${COMMIT_SHAS[@]}"; do
         if git rev-parse --verify -q "${sha}^" >/dev/null 2>&1; then
             crange="${sha}^..${sha}"
+            [[ "$REVERSED" == "on" ]] && crange="${sha}..${sha}^"
         else
-            crange="$(git hash-object -t tree /dev/null)..${sha}"
+            empty_tree=$(git hash-object -t tree /dev/null)
+            crange="${empty_tree}..${sha}"
+            [[ "$REVERSED" == "on" ]] && crange="${sha}..${empty_tree}"
         fi
         cdiff=$(git diff --no-color --unified="$CONTEXT_LINES" "$crange" 2>/dev/null || true)
         printf '<div class="diff-set" data-set="%s">\n' "$(html_escape "$sha")"
@@ -1132,222 +1272,107 @@ cat <<'HTML_FOOT'
 (function () {
     // ----- Keep --summary-height in sync so sticky file headers sit below the toolbar.
     var summaryEl = document.querySelector('.summary');
+    var summaryHeight = 0;
     if (summaryEl) {
         var syncSummaryHeight = function () {
-            document.documentElement.style.setProperty('--summary-height', summaryEl.offsetHeight + 'px');
+            summaryHeight = summaryEl.offsetHeight;
+            document.documentElement.style.setProperty('--summary-height', summaryHeight + 'px');
         };
         syncSummaryHeight();
         window.addEventListener('resize', syncSummaryHeight);
         if ('ResizeObserver' in window) new ResizeObserver(syncSummaryHeight).observe(summaryEl);
     }
 
-    // ----- Collapse/expand file cards on header click.
-    document.querySelectorAll('.file-header').forEach(function (h) {
-        h.addEventListener('click', function (e) {
-            // Don't collapse when a link or button inside the header is clicked.
-            if (e.target.closest('a, button')) return;
-            h.parentElement.classList.toggle('collapsed');
-        });
+    // ----- Delegated clicks: file-card collapse + collapse placeholders.
+    //       One document listener instead of one per header/placeholder.
+    document.addEventListener('click', function (e) {
+        var t = e.target;
+        var ph = t.closest ? t.closest('tr.collapse-placeholder') : null;
+        if (ph) {
+            var r = ph.nextElementSibling;
+            while (r && r.classList.contains('ctx-hidden')) {
+                r.classList.remove('ctx-hidden');
+                r = r.nextElementSibling;
+            }
+            ph.remove();
+            return;
+        }
+        var h = t.closest ? t.closest('.file-header') : null;
+        // Don't collapse when a link or button inside the header is clicked.
+        if (h && !t.closest('a, button')) h.parentElement.classList.toggle('collapsed');
     });
 
-    // ----- Populate the sidebar file list (BEFORE SbS is built,
-    //       so tr.add / tr.del counts come only from the unified table).
-    var fileList = document.getElementById('file-list');
-    var cards = [];
-    var lis = [];
     function activeSet() {
-        return document.querySelector('.diff-set.active') || document;
-    }
-    function buildSidebar() {
-    fileList.innerHTML = '';
-    cards = Array.prototype.slice.call(activeSet().querySelectorAll('.file-card'));
-    cards.forEach(function (card) {
-        var statusEl = card.querySelector('.file-header .status');
-        var status = statusEl ? (statusEl.classList[1] || 'modified') : 'modified';
-        var path = (card.querySelector('.file-header .path') || {}).textContent || '';
-        var adds = card.querySelectorAll('table.unified tr.add').length;
-        var dels = card.querySelectorAll('table.unified tr.del').length;
-
-        // Split path into directory and basename.
-        var base = path, dir = '';
-        var slash = path.lastIndexOf('/');
-        if (slash >= 0) { base = path.substring(slash + 1); dir = path.substring(0, slash); }
-
-        var li = document.createElement('li');
-        li.setAttribute('data-target', card.id);
-        li.title = path;
-
-        var dot = document.createElement('span');
-        dot.className = 'dot ' + status;
-        li.appendChild(dot);
-
-        var info = document.createElement('div');
-        info.className = 'info';
-        var nameSpan = document.createElement('span');
-        nameSpan.className = 'name';
-        nameSpan.textContent = base;
-        info.appendChild(nameSpan);
-        if (dir) {
-            var dirSpan = document.createElement('span');
-            dirSpan.className = 'dir';
-            dirSpan.textContent = dir;
-            info.appendChild(dirSpan);
-        }
-        li.appendChild(info);
-
-        var counts = document.createElement('span');
-        counts.className = 'counts';
-        counts.innerHTML = '<span class="a">+' + adds + '</span> <span class="d">-' + dels + '</span>';
-        li.appendChild(counts);
-
-        li.addEventListener('click', function () {
-            card.classList.remove('collapsed');
-            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-        fileList.appendChild(li);
-    });
-    lis = Array.prototype.slice.call(fileList.querySelectorAll('li'));
-    applyFilter();
-    var header = document.querySelector('.sidebar-header span');
-    if (header) header.textContent = 'Files (' + cards.length + ')';
-    currentActiveId = null;
-    updateActive();
+        return document.querySelector('.diff-set.active') || document.body;
     }
 
-    // Highlight the currently-visible file in the sidebar.
-    var currentActiveId = null;
-    function updateActive() {
-        if (cards.length === 0) return;
-        var offset = (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--summary-height')) || 0) + 1;
-        var activeId = cards[0].id;
-        for (var i = 0; i < cards.length; i++) {
-            if (cards[i].getBoundingClientRect().top <= offset) activeId = cards[i].id;
-            else break;
-        }
-        if (activeId === currentActiveId) return;
-        currentActiveId = activeId;
-        lis.forEach(function (li) {
-            li.classList.toggle('active', li.getAttribute('data-target') === activeId);
-        });
+    // ----- Side-by-side table construction (built lazily, see processSet).
+    // Unified code cells start with <span class="pfx">+|-| </span>; the split
+    // view carries the prefix in its own column classes, so drop it.
+    var PFX_RE = /^<span class="pfx">.<\/span>/;
+    function srcHtml(td) {
+        // Whitespace markers stash the pristine markup in data-orig.
+        return td.dataset.orig !== undefined ? td.dataset.orig : td.innerHTML;
     }
-    var ticking = false;
-    var onScroll = function () {
-        if (ticking) return;
-        ticking = true;
-        requestAnimationFrame(function () { ticking = false; updateActive(); });
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
-    buildSidebar();
-
-    // ----- Sidebar show/hide (persisted).
-    var hideBtn = document.getElementById('sidebar-hide');
-    var showBtn = document.getElementById('sidebar-show');
-    function setSidebar(hidden) {
-        document.body.classList.toggle('sidebar-hidden', hidden);
-        try { localStorage.setItem('gd2h-sidebar', hidden ? 'hidden' : 'shown'); } catch (_) {}
-    }
-    try {
-        if (localStorage.getItem('gd2h-sidebar') === 'hidden') setSidebar(true);
-    } catch (_) {}
-    if (hideBtn) hideBtn.addEventListener('click', function () { setSidebar(true); });
-    if (showBtn) showBtn.addEventListener('click', function () { setSidebar(false); });
-
-    // ----- Sidebar file filter.
-    var filterInput = document.getElementById('file-filter');
-    function applyFilter() {
-        var q = filterInput ? filterInput.value.toLowerCase() : '';
-        fileList.querySelectorAll('li').forEach(function (li) {
-            var match = !q || (li.title || '').toLowerCase().indexOf(q) >= 0;
-            li.classList.toggle('hidden', !match);
-        });
-    }
-    if (filterInput) filterInput.addEventListener('input', applyFilter);
-
-    // ----- Build the side-by-side table for each unified table.
-    function mkTd(cls, html) {
-        var td = document.createElement('td');
-        td.className = cls;
-        td.innerHTML = html;
-        return td;
-    }
+    function stripPfx(html) { return html.replace(PFX_RE, ''); }
+    // Building the whole tbody as one HTML string is far cheaper than
+    // createElement/appendChild per cell on large diffs.
     function buildSbs(unifiedTable) {
-        var sbs = document.createElement('table');
-        sbs.className = 'diff-table sbs';
-        var tbody = document.createElement('tbody');
-        sbs.appendChild(tbody);
-
-        var rows = Array.prototype.slice.call(unifiedTable.querySelectorAll('tbody > tr'));
-        var i = 0;
-        while (i < rows.length) {
+        var rows = unifiedTable.tBodies[0] ? unifiedTable.tBodies[0].rows : [];
+        var out = [];
+        var i = 0, n = rows.length;
+        while (i < n) {
             var r = rows[i];
-            if (r.classList.contains('hunk') || r.classList.contains('binary') || r.classList.contains('nonewline')) {
-                var tr = document.createElement('tr');
-                tr.className = r.className;
-                var td = document.createElement('td');
-                td.colSpan = 4;
-                td.className = 'code';
-                var srcTd = r.querySelector('td.code') || r.querySelector('td[colspan]') || r.querySelector('td');
-                td.innerHTML = srcTd.innerHTML;
-                tr.appendChild(td);
-                tbody.appendChild(tr);
+            var cl = r.classList;
+            if (cl.contains('hunk') || cl.contains('binary') || cl.contains('nonewline')) {
+                var srcTd = r.querySelector('td.code') || r.cells[r.cells.length - 1];
+                out.push('<tr class="' + r.className + '"><td colspan="4" class="code">' + (srcTd ? srcTd.innerHTML : '') + '</td></tr>');
                 i++;
                 continue;
             }
-            if (r.classList.contains('ctx')) {
-                var tds = r.querySelectorAll('td');
-                var ll = tds[0].textContent;
-                var rl = tds[1].textContent;
-                var code = tds[2].innerHTML;
-                if (code.charAt(0) === ' ') code = code.substring(1);
-                var tr2 = document.createElement('tr');
-                tr2.className = 'ctx';
-                tr2.appendChild(mkTd('ln', ll));
-                tr2.appendChild(mkTd('code ctx', code));
-                tr2.appendChild(mkTd('ln', rl));
-                tr2.appendChild(mkTd('code ctx', code));
-                tbody.appendChild(tr2);
+            if (cl.contains('ctx')) {
+                var code = stripPfx(srcHtml(r.cells[2]));
+                out.push('<tr class="ctx"><td class="ln side-l">' + r.cells[0].textContent +
+                    '</td><td class="code ctx side-l">' + code +
+                    '</td><td class="ln side-r">' + r.cells[1].textContent +
+                    '</td><td class="code ctx side-r">' + code + '</td></tr>');
                 i++;
                 continue;
             }
             // Collect consecutive del rows then consecutive add rows.
             var dels = [];
-            while (i < rows.length && rows[i].classList.contains('del')) { dels.push(rows[i]); i++; }
+            while (i < n && rows[i].classList.contains('del')) { dels.push(rows[i]); i++; }
             var adds = [];
-            while (i < rows.length && rows[i].classList.contains('add')) { adds.push(rows[i]); i++; }
+            while (i < n && rows[i].classList.contains('add')) { adds.push(rows[i]); i++; }
+            if (!dels.length && !adds.length) { i++; continue; }
             var maxN = Math.max(dels.length, adds.length);
             for (var j = 0; j < maxN; j++) {
                 var d = dels[j], a = adds[j];
-                var cls = (d && a) ? 'mod' : (d ? 'del' : 'add');
-                var tr3 = document.createElement('tr');
-                tr3.className = cls;
-                if (d) {
-                    var dtds = d.querySelectorAll('td');
-                    var dln = dtds[0].textContent;
-                    var dcode = dtds[2].innerHTML;
-                    if (dcode.charAt(0) === '-') dcode = dcode.substring(1);
-                    tr3.appendChild(mkTd('ln del', dln));
-                    tr3.appendChild(mkTd('code del', dcode));
-                } else {
-                    tr3.appendChild(mkTd('ln empty', ''));
-                    tr3.appendChild(mkTd('code empty', ''));
-                }
-                if (a) {
-                    var atds = a.querySelectorAll('td');
-                    var aln = atds[1].textContent;
-                    var acode = atds[2].innerHTML;
-                    if (acode.charAt(0) === '+') acode = acode.substring(1);
-                    tr3.appendChild(mkTd('ln add', aln));
-                    tr3.appendChild(mkTd('code add', acode));
-                } else {
-                    tr3.appendChild(mkTd('ln empty', ''));
-                    tr3.appendChild(mkTd('code empty', ''));
-                }
-                tbody.appendChild(tr3);
+                var s = '<tr class="' + ((d && a) ? 'mod' : (d ? 'del' : 'add')) + '">';
+                s += d
+                    ? '<td class="ln del side-l">' + d.cells[0].textContent + '</td><td class="code del side-l">' + stripPfx(srcHtml(d.cells[2])) + '</td>'
+                    : '<td class="ln empty side-l"></td><td class="code empty side-l"></td>';
+                s += a
+                    ? '<td class="ln add side-r">' + a.cells[1].textContent + '</td><td class="code add side-r">' + stripPfx(srcHtml(a.cells[2])) + '</td>'
+                    : '<td class="ln empty side-r"></td><td class="code empty side-r"></td>';
+                out.push(s + '</tr>');
             }
         }
+        var sbs = document.createElement('table');
+        sbs.className = 'diff-table sbs';
+        sbs.innerHTML = '<tbody>' + out.join('') + '</tbody>';
         return sbs;
     }
+    // Split tables double the DOM, so only build them for a set that is
+    // actually displayed in split view.
+    function ensureSbs(root) {
+        root.querySelectorAll('table.diff-table.unified').forEach(function (t) {
+            if (t.dataset.sbs === '1') return;
+            t.dataset.sbs = '1';
+            t.parentNode.insertBefore(buildSbs(t), t.nextSibling);
+        });
+    }
+
     // ----- Syntax highlighting (per-line, before SbS so both views get it).
     var extLang = {
         js:'javascript', mjs:'javascript', cjs:'javascript', jsx:'javascript',
@@ -1376,60 +1401,74 @@ cat <<'HTML_FOOT'
         var pathEl = card.querySelector('.file-header .path');
         if (!pathEl) return;
         var p = pathEl.textContent;
-        var arrow = p.indexOf('\u2192');
+        var arrow = p.indexOf('→');
         if (arrow >= 0) p = p.substring(arrow + 1).trim();
         var lang = detectLang(p);
         if (!lang || !hljs.getLanguage(lang)) return;
-        card.querySelectorAll('table.unified > tbody > tr').forEach(function (tr) {
-            if (!(tr.classList.contains('ctx') || tr.classList.contains('add') || tr.classList.contains('del'))) return;
-            var tds = tr.querySelectorAll('td');
-            var td = tds[2];
-            if (!td) return;
+        var table = card.querySelector('table.diff-table.unified');
+        if (!table || !table.tBodies[0]) return;
+        var rows = table.tBodies[0].rows;
+        var opts = { language: lang, ignoreIllegals: true };
+        for (var i = 0; i < rows.length; i++) {
+            var cl = rows[i].classList;
+            if (!(cl.contains('ctx') || cl.contains('add') || cl.contains('del'))) continue;
+            var td = rows[i].cells[2];
+            if (!td) continue;
             var text = td.textContent;
-            if (text.length === 0) return;
-            var prefix = text.charAt(0);
-            var rest = text.substring(1);
+            if (text.length === 0) continue;
             try {
-                var res = hljs.highlight(rest, { language: lang, ignoreIllegals: true });
-                // Escape prefix char.
-                var pe = prefix === '<' ? '&lt;' : prefix === '>' ? '&gt;' : prefix === '&' ? '&amp;' : prefix;
-                td.innerHTML = pe + res.value;
+                td.innerHTML = '<span class="pfx">' + text.charAt(0) + '</span>' +
+                    hljs.highlight(text.substring(1), opts).value;
             } catch (_) {}
-        });
+        }
     }
-    document.querySelectorAll('.file-card').forEach(highlightCard);
 
     // ----- Intra-line (word-level) highlighting, Bitbucket-style.
+    var WORD_RE = /\s+|[A-Za-z0-9_]+|[^\sA-Za-z0-9_]/g;
+    var WS_RE = /^\s+$/;
     function wordDiff(a, b) {
-        var re = /\s+|[A-Za-z0-9_]+|[^\sA-Za-z0-9_]/g;
-        var at = a.match(re) || [];
-        var bt = b.match(re) || [];
-        var n = at.length, m = bt.length;
-        if (n * m > 40000) return null;
-        var dp = new Array(n + 1);
-        for (var i = 0; i <= n; i++) dp[i] = new Int16Array(m + 1);
-        for (var i = 1; i <= n; i++) {
-            for (var j = 1; j <= m; j++) {
-                dp[i][j] = at[i - 1] === bt[j - 1]
-                    ? dp[i - 1][j - 1] + 1
-                    : (dp[i - 1][j] >= dp[i][j - 1] ? dp[i - 1][j] : dp[i][j - 1]);
+        var at = a.match(WORD_RE) || [];
+        var bt = b.match(WORD_RE) || [];
+        // Trim the common head/tail before the O(n*m) LCS: most edited lines
+        // differ only in the middle, which keeps the table tiny.
+        var na = at.length, nb = bt.length;
+        var lo = 0;
+        while (lo < na && lo < nb && at[lo] === bt[lo]) lo++;
+        var ha = na, hb = nb;
+        while (ha > lo && hb > lo && at[ha - 1] === bt[hb - 1]) { ha--; hb--; }
+        var n = ha - lo, m = hb - lo;
+        var aMark = new Array(na), bMark = new Array(nb);
+        var i, j;
+        if (n === 0 || m === 0) {
+            for (i = lo; i < ha; i++) aMark[i] = true;
+            for (j = lo; j < hb; j++) bMark[j] = true;
+        } else {
+            if (n * m > 40000) return null;
+            // One flat typed array instead of n+1 allocations.
+            var w = m + 1;
+            var dp = new Int32Array((n + 1) * w);
+            for (i = 1; i <= n; i++) {
+                var row = i * w, prow = row - w, ai = at[lo + i - 1];
+                for (j = 1; j <= m; j++) {
+                    dp[row + j] = ai === bt[lo + j - 1]
+                        ? dp[prow + j - 1] + 1
+                        : (dp[prow + j] >= dp[row + j - 1] ? dp[prow + j] : dp[row + j - 1]);
+                }
             }
+            var ci = n, cj = m;
+            while (ci > 0 && cj > 0) {
+                if (at[lo + ci - 1] === bt[lo + cj - 1]) { ci--; cj--; }
+                else if (dp[(ci - 1) * w + cj] >= dp[ci * w + cj - 1]) { aMark[lo + --ci] = true; }
+                else { bMark[lo + --cj] = true; }
+            }
+            while (ci > 0) { aMark[lo + --ci] = true; }
+            while (cj > 0) { bMark[lo + --cj] = true; }
         }
-        var aMark = new Array(n), bMark = new Array(m);
-        var ci = n, cj = m;
-        while (ci > 0 && cj > 0) {
-            if (at[ci - 1] === bt[cj - 1]) { ci--; cj--; }
-            else if (dp[ci - 1][cj] >= dp[ci][cj - 1]) { aMark[ci - 1] = true; ci--; }
-            else { bMark[cj - 1] = true; cj--; }
-        }
-        while (ci > 0) { aMark[--ci] = true; }
-        while (cj > 0) { bMark[--cj] = true; }
         function ranges(tokens, marks) {
             var res = [], pos = 0, cur = null;
             for (var k = 0; k < tokens.length; k++) {
                 var len = tokens[k].length;
-                var isWs = /^\s+$/.test(tokens[k]);
-                if (marks[k] && !isWs) {
+                if (marks[k] && !WS_RE.test(tokens[k])) {
                     if (cur && cur[1] === pos) cur[1] = pos + len;
                     else { cur = [pos, pos + len]; res.push(cur); }
                 } else {
@@ -1441,61 +1480,68 @@ cat <<'HTML_FOOT'
         }
         return { a: ranges(at, aMark), b: ranges(bt, bMark) };
     }
+    // Walks the markup once, copying whole runs instead of char-by-char
+    // concatenation, so highlight spans survive untouched.
     function wrapCharRanges(html, ranges, cls) {
         if (!ranges || !ranges.length) return html;
-        var out = '', pos = 0, ri = 0, inSpan = false;
+        var open = '<span class="' + cls + '">';
+        var out = '', run = 0, pos = 0, ri = 0, inSpan = false;
         var i = 0, L = html.length;
-        function sync() {
+        function flushTo(idx) {
+            if (idx > run) out += html.substring(run, idx);
+            run = idx;
+        }
+        function sync(idx) {
             while (ri < ranges.length && pos >= ranges[ri][1]) {
-                if (inSpan) { out += '</span>'; inSpan = false; }
+                if (inSpan) { flushTo(idx); out += '</span>'; inSpan = false; }
                 ri++;
             }
             if (!inSpan && ri < ranges.length && pos >= ranges[ri][0] && pos < ranges[ri][1]) {
-                out += '<span class="' + cls + '">';
+                flushTo(idx);
+                out += open;
                 inSpan = true;
             }
         }
         while (i < L) {
-            var c = html.charAt(i);
-            if (c === '<') {
+            var c = html.charCodeAt(i);
+            if (c === 60 /* < */) {
                 var wasIn = inSpan;
-                if (inSpan) { out += '</span>'; inSpan = false; }
+                if (inSpan) { flushTo(i); out += '</span>'; inSpan = false; }
                 var e = html.indexOf('>', i);
                 if (e < 0) e = L - 1;
-                out += html.substring(i, e + 1);
                 i = e + 1;
-                if (wasIn) { out += '<span class="' + cls + '">'; inSpan = true; }
+                if (wasIn) { flushTo(i); out += open; inSpan = true; }
                 continue;
             }
-            sync();
-            if (c === '&') {
+            sync(i);
+            if (c === 38 /* & */) {
                 var s = html.indexOf(';', i);
-                if (s < 0) { out += c; i++; pos++; continue; }
-                out += html.substring(i, s + 1);
-                i = s + 1;
+                i = s < 0 ? i + 1 : s + 1;
             } else {
-                out += c;
                 i++;
             }
             pos++;
         }
-        sync();
+        sync(L);
+        flushTo(L);
         if (inSpan) out += '</span>';
         return out;
     }
+    function shift1(r) { return [r[0] + 1, r[1] + 1]; }
     function applyIntraLineUnified(table) {
-        var rows = Array.prototype.slice.call(table.querySelectorAll(':scope > tbody > tr'));
-        var i = 0;
-        while (i < rows.length) {
+        if (!table.tBodies[0]) return;
+        var rows = table.tBodies[0].rows;
+        var i = 0, n = rows.length;
+        while (i < n) {
             if (!rows[i].classList.contains('del')) { i++; continue; }
             var dels = [];
-            while (i < rows.length && rows[i].classList.contains('del')) { dels.push(rows[i]); i++; }
+            while (i < n && rows[i].classList.contains('del')) { dels.push(rows[i]); i++; }
             var adds = [];
-            while (i < rows.length && rows[i].classList.contains('add')) { adds.push(rows[i]); i++; }
-            var n = Math.min(dels.length, adds.length);
-            for (var k = 0; k < n; k++) {
-                var dTd = dels[k].querySelectorAll('td')[2];
-                var aTd = adds[k].querySelectorAll('td')[2];
+            while (i < n && rows[i].classList.contains('add')) { adds.push(rows[i]); i++; }
+            var pairs = Math.min(dels.length, adds.length);
+            for (var k = 0; k < pairs; k++) {
+                var dTd = dels[k].cells[2];
+                var aTd = adds[k].cells[2];
                 if (!dTd || !aTd) continue;
                 var dText = dTd.textContent;
                 var aText = aTd.textContent;
@@ -1505,174 +1551,340 @@ cat <<'HTML_FOOT'
                 var diff = wordDiff(dText, aText);
                 if (!diff) continue;
                 // innerHTML has the prefix char at position 0, so shift ranges by +1.
-                var dR = diff.a.map(function (r) { return [r[0] + 1, r[1] + 1]; });
-                var aR = diff.b.map(function (r) { return [r[0] + 1, r[1] + 1]; });
-                dTd.innerHTML = wrapCharRanges(dTd.innerHTML, dR, 'word-diff');
-                aTd.innerHTML = wrapCharRanges(aTd.innerHTML, aR, 'word-diff');
+                if (diff.a.length) dTd.innerHTML = wrapCharRanges(dTd.innerHTML, diff.a.map(shift1), 'word-diff');
+                if (diff.b.length) aTd.innerHTML = wrapCharRanges(aTd.innerHTML, diff.b.map(shift1), 'word-diff');
             }
         }
     }
-    document.querySelectorAll('table.diff-table.unified').forEach(applyIntraLineUnified);
 
-    document.querySelectorAll('table.diff-table.unified').forEach(function (t) {
-        var sbs = buildSbs(t);
-        t.parentNode.insertBefore(sbs, t.nextSibling);
-    });
+    // ----- Split view: lock a selection to the pane it started in, so
+    //       dragging across never mixes old and new text.
+    document.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
+        var td = e.target.closest ? e.target.closest('table.diff-table.sbs td') : null;
+        document.body.classList.remove('sel-l', 'sel-r');
+        if (!td) return;
+        if (td.classList.contains('side-l')) document.body.classList.add('sel-l');
+        else if (td.classList.contains('side-r')) document.body.classList.add('sel-r');
+    }, true);
 
     // ----- Collapse unchanged context (keep 30 lines around each change).
-    var collapseCheckbox = document.getElementById('collapse-toggle');
     var COLLAPSE_CONTEXT = 30;
-    function applyCollapse(on) {
-        document.querySelectorAll('table.diff-table').forEach(function (table) {
+    var collapseOn = false;
+    function collapseTable(table, on) {
+        var hadHidden = table.dataset.collapsed === '1';
+        if (hadHidden) {
             table.querySelectorAll('tr.collapse-placeholder').forEach(function (tr) { tr.remove(); });
-            table.querySelectorAll('tr.ctx-hidden').forEach(function (tr) {
-                tr.style.display = '';
-                tr.classList.remove('ctx-hidden');
-            });
-            if (!on) return;
-            var rows = Array.prototype.slice.call(table.querySelectorAll(':scope > tbody > tr'));
-            var keep = new Array(rows.length);
-            for (var i = 0; i < rows.length; i++) {
-                var r = rows[i];
-                if (r.classList.contains('add') || r.classList.contains('del') || r.classList.contains('mod')) {
-                    var lo = Math.max(0, i - COLLAPSE_CONTEXT);
-                    var hi = Math.min(rows.length - 1, i + COLLAPSE_CONTEXT);
-                    for (var j = lo; j <= hi; j++) keep[j] = true;
-                } else if (!r.classList.contains('ctx')) {
-                    keep[i] = true;
-                }
+            table.querySelectorAll('tr.ctx-hidden').forEach(function (tr) { tr.classList.remove('ctx-hidden'); });
+            table.dataset.collapsed = '0';
+        }
+        if (!on || !table.tBodies[0]) return;
+        var rows = Array.prototype.slice.call(table.tBodies[0].rows);
+        var n = rows.length;
+        var keep = new Uint8Array(n);
+        var last = -1;
+        for (var i = 0; i < n; i++) {
+            var cl = rows[i].classList;
+            if (cl.contains('add') || cl.contains('del') || cl.contains('mod')) {
+                var lo = i - COLLAPSE_CONTEXT;
+                if (lo <= last) lo = last + 1;
+                if (lo < 0) lo = 0;
+                var hi = Math.min(n - 1, i + COLLAPSE_CONTEXT);
+                for (var j = lo; j <= hi; j++) keep[j] = 1;
+                if (hi > last) last = hi;
+            } else if (!cl.contains('ctx')) {
+                keep[i] = 1;
+                if (i > last) last = i;
             }
-            var isSbs = table.classList.contains('sbs');
-            var cols = isSbs ? 4 : 3;
-            var k = 0;
-            while (k < rows.length) {
-                if (!keep[k] && rows[k].classList.contains('ctx')) {
-                    var start = k;
-                    while (k < rows.length && !keep[k] && rows[k].classList.contains('ctx')) {
-                        rows[k].classList.add('ctx-hidden');
-                        rows[k].style.display = 'none';
-                        k++;
-                    }
-                    var count = k - start;
-                    var hiddenGroup = rows.slice(start, k);
-                    var ph = document.createElement('tr');
-                    ph.className = 'collapse-placeholder';
-                    ph.innerHTML = '<td colspan="' + cols + '"><span class="cph-text">&hellip; ' + count + ' unchanged line' + (count === 1 ? '' : 's') + ' (click to expand)</span></td>';
-                    (function (group, placeholder) {
-                        placeholder.addEventListener('click', function () {
-                            group.forEach(function (r) {
-                                r.style.display = '';
-                                r.classList.remove('ctx-hidden');
-                            });
-                            placeholder.remove();
-                        });
-                    })(hiddenGroup, ph);
-                    rows[start].parentNode.insertBefore(ph, rows[start]);
-                } else {
+        }
+        var cols = table.classList.contains('sbs') ? 4 : 3;
+        var k = 0, hidden = false;
+        var frag = [];
+        while (k < n) {
+            if (!keep[k] && rows[k].classList.contains('ctx')) {
+                var start = k;
+                while (k < n && !keep[k] && rows[k].classList.contains('ctx')) {
+                    rows[k].classList.add('ctx-hidden');
                     k++;
                 }
+                var count = k - start;
+                var ph = document.createElement('tr');
+                ph.className = 'collapse-placeholder';
+                ph.innerHTML = '<td colspan="' + cols + '"><span class="cph-text">&hellip; ' + count + ' unchanged line' + (count === 1 ? '' : 's') + ' (click to expand)</span></td>';
+                frag.push([ph, rows[start]]);
+                hidden = true;
+            } else {
+                k++;
             }
+        }
+        for (var f = 0; f < frag.length; f++) frag[f][1].parentNode.insertBefore(frag[f][0], frag[f][1]);
+        if (hidden) table.dataset.collapsed = '1';
+    }
+    function applyCollapse(on, root) {
+        (root || activeSet()).querySelectorAll('table.diff-table').forEach(function (t) {
+            collapseTable(t, on);
         });
     }
-    try {
-        var savedCollapse = localStorage.getItem('gd2h-collapse');
-        var collapseOn = savedCollapse === null
-            ? (document.body.getAttribute('data-initial-collapse') === 'on')
-            : (savedCollapse === 'on');
-        if (collapseOn) {
-            collapseCheckbox.checked = true;
-            applyCollapse(true);
-        }
-    } catch (_) {}
-    collapseCheckbox.addEventListener('change', function () {
-        var on = collapseCheckbox.checked;
-        applyCollapse(on);
-        try { localStorage.setItem('gd2h-collapse', on ? 'on' : 'off'); } catch (_) {}
-    });
 
-    // ----- Theme toggle (persisted in localStorage).
-    var themeBtn = document.getElementById('theme-toggle');
-    function applyTheme(theme) {
-        if (theme === 'dark') document.body.classList.add('theme-dark');
-        else document.body.classList.remove('theme-dark');
+    // ----- Whitespace markers (persisted). Wraps spaces/tabs in spans so CSS
+    //       can overlay markers without changing the underlying characters.
+    var wsOn = false;
+    var WS_TAG_RE = /(<[^>]*>)|([^<]+)/g;
+    function transformWs(html) {
+        // Only substitute inside text nodes — skip attributes/tags so
+        // syntax-highlight markup stays intact. Tab is kept after the
+        // arrow so it still advances to the next tab stop.
+        return html.replace(WS_TAG_RE, function (_, tag, text) {
+            if (tag) return tag;
+            if (text.indexOf(' ') < 0 && text.indexOf('\t') < 0) return text;
+            return text
+                .replace(/ /g, '\x00')
+                .replace(/\t/g, '\x01')
+                .replace(/\x00/g, '<span class="ws-mark ws-sp"> </span>')
+                .replace(/\x01/g, '<span class="ws-mark ws-tab">\t</span>');
+        });
+    }
+    function applyWs(on, root) {
+        (root || activeSet()).querySelectorAll('td.code').forEach(function (td) {
+            if (on) {
+                if (td.dataset.orig === undefined) td.dataset.orig = td.innerHTML;
+                // Unified-view cells start with the diff prefix span, which
+                // isn't part of the source line — skip it so its space doesn't
+                // get marked.
+                var src = td.dataset.orig;
+                var pm = src.match(PFX_RE);
+                td.innerHTML = pm
+                    ? pm[0] + transformWs(src.substring(pm[0].length))
+                    : transformWs(src);
+            } else if (td.dataset.orig !== undefined) {
+                td.innerHTML = td.dataset.orig;
+                delete td.dataset.orig;
+            }
+        });
+        document.body.classList.toggle('show-whitespace', on);
+    }
+
+    // ----- Per-set processing. Highlighting, word diff and split tables are
+    //       the expensive passes: run them once, and only for the set the
+    //       user is actually looking at.
+    var currentView = document.body.classList.contains('view-split') ? 'split' : 'unified';
+    function processSet(set) {
+        if (!set || set === document.body) return;
+        if (set.dataset.processed !== '1') {
+            set.dataset.processed = '1';
+            set.querySelectorAll('.file-card').forEach(highlightCard);
+            set.querySelectorAll('table.diff-table.unified').forEach(applyIntraLineUnified);
+        }
+        if (currentView === 'split') ensureSbs(set);
+        applyWs(wsOn, set);
+        applyCollapse(collapseOn, set);
+    }
+
+    // ----- Sidebar file list.
+    var fileList = document.getElementById('file-list');
+    var filterInput = document.getElementById('file-filter');
+    var cards = [];
+    var lis = [];
+    var liById = Object.create(null);
+    var totalAdds = 0, totalDels = 0;
+    var currentActiveId = null;
+    var activeLi = null;
+
+    function buildSidebar() {
+        cards = Array.prototype.slice.call(activeSet().querySelectorAll('.file-card'));
+        lis = [];
+        liById = Object.create(null);
+        totalAdds = totalDels = 0;
+        var frag = document.createDocumentFragment();
+        cards.forEach(function (card) {
+            var statusEl = card.querySelector('.file-header .status');
+            var status = statusEl ? (statusEl.classList[1] || 'modified') : 'modified';
+            var pathEl = card.querySelector('.file-header .path');
+            var path = pathEl ? pathEl.textContent : '';
+            // One pass over the unified rows instead of two class queries.
+            var table = card.querySelector('table.diff-table.unified');
+            var adds = 0, dels = 0;
+            if (table && table.tBodies[0]) {
+                var rows = table.tBodies[0].rows;
+                for (var i = 0; i < rows.length; i++) {
+                    var cl = rows[i].classList;
+                    if (cl.contains('add')) adds++;
+                    else if (cl.contains('del')) dels++;
+                }
+            }
+            totalAdds += adds;
+            totalDels += dels;
+
+            // Split path into directory and basename.
+            var base = path, dir = '';
+            var slash = path.lastIndexOf('/');
+            if (slash >= 0) { base = path.substring(slash + 1); dir = path.substring(0, slash); }
+
+            var li = document.createElement('li');
+            li.setAttribute('data-target', card.id);
+            li.title = path;
+
+            var dot = document.createElement('span');
+            dot.className = 'dot ' + status;
+            li.appendChild(dot);
+
+            var info = document.createElement('div');
+            info.className = 'info';
+            var nameSpan = document.createElement('span');
+            nameSpan.className = 'name';
+            nameSpan.textContent = base;
+            info.appendChild(nameSpan);
+            if (dir) {
+                var dirSpan = document.createElement('span');
+                dirSpan.className = 'dir';
+                dirSpan.textContent = dir;
+                info.appendChild(dirSpan);
+            }
+            li.appendChild(info);
+
+            var counts = document.createElement('span');
+            counts.className = 'counts';
+            counts.innerHTML = '<span class="a">+' + adds + '</span> <span class="d">-' + dels + '</span>';
+            li.appendChild(counts);
+
+            li.addEventListener('click', function () {
+                card.classList.remove('collapsed');
+                card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+            frag.appendChild(li);
+            lis.push(li);
+            liById[card.id] = li;
+        });
+        fileList.textContent = '';
+        fileList.appendChild(frag);
+        applyFilter();
+        var header = document.getElementById('files-count');
+        if (header) header.textContent = 'Files (' + cards.length + ')';
+        currentActiveId = null;
+        activeLi = null;
+        updateActive();
+    }
+
+    // Highlight the currently-visible file in the sidebar. The cards are in
+    // document order, so a binary search beats reading every rect on scroll.
+    function updateActive() {
+        if (cards.length === 0) return;
+        var offset = summaryHeight + 1;
+        var lo = 0, hi = cards.length - 1, found = 0;
+        while (lo <= hi) {
+            var mid = (lo + hi) >> 1;
+            if (cards[mid].getBoundingClientRect().top <= offset) { found = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        var activeId = cards[found].id;
+        if (activeId === currentActiveId) return;
+        currentActiveId = activeId;
+        if (activeLi) activeLi.classList.remove('active');
+        activeLi = liById[activeId] || null;
+        if (activeLi) activeLi.classList.add('active');
+    }
+    var ticking = false;
+    var onScroll = function () {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(function () { ticking = false; updateActive(); });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+
+    // ----- Sidebar show/hide (persisted).
+    var hideBtn = document.getElementById('sidebar-hide');
+    var showBtn = document.getElementById('sidebar-show');
+    function setSidebar(hidden) {
+        document.body.classList.toggle('sidebar-hidden', hidden);
+        try { localStorage.setItem('gd2h-sidebar', hidden ? 'hidden' : 'shown'); } catch (_) {}
     }
     try {
-        var saved = localStorage.getItem('gd2h-theme');
-        if (saved) applyTheme(saved);
+        if (localStorage.getItem('gd2h-sidebar') === 'hidden') setSidebar(true);
+    } catch (_) {}
+    if (hideBtn) hideBtn.addEventListener('click', function () { setSidebar(true); });
+    if (showBtn) showBtn.addEventListener('click', function () { setSidebar(false); });
+
+    // ----- Sidebar file filter (works off the cached <li> list).
+    function applyFilter() {
+        var q = filterInput ? filterInput.value.toLowerCase() : '';
+        for (var i = 0; i < lis.length; i++) {
+            var li = lis[i];
+            li.classList.toggle('hidden', !(!q || (li.title || '').toLowerCase().indexOf(q) >= 0));
+        }
+    }
+    if (filterInput) filterInput.addEventListener('input', applyFilter);
+
+    // ----- Toolbar toggles.
+    var collapseCheckbox = document.getElementById('collapse-toggle');
+    var cbCheckbox = document.getElementById('colorblind-toggle');
+    var themeBtn = document.getElementById('theme-toggle');
+    var wsCheckbox = document.getElementById('ws-toggle');
+    var viewButtons = document.querySelectorAll('.view-toggle button');
+
+    function stored(key, attr) {
+        var v = null;
+        try { v = localStorage.getItem(key); } catch (_) {}
+        return v === null ? (document.body.getAttribute(attr) === 'on') : (v === 'on');
+    }
+    // Read the persisted state first; the DOM passes run once, at the end.
+    collapseOn = stored('gd2h-collapse', 'data-initial-collapse');
+    wsOn = stored('gd2h-ws', 'data-initial-ws');
+    collapseCheckbox.checked = collapseOn;
+    wsCheckbox.checked = wsOn;
+    document.body.classList.toggle('show-whitespace', wsOn);
+
+    collapseCheckbox.addEventListener('change', function () {
+        collapseOn = collapseCheckbox.checked;
+        applyCollapse(collapseOn);
+        try { localStorage.setItem('gd2h-collapse', collapseOn ? 'on' : 'off'); } catch (_) {}
+    });
+    wsCheckbox.addEventListener('change', function () {
+        wsOn = wsCheckbox.checked;
+        applyWs(wsOn);
+        try { localStorage.setItem('gd2h-ws', wsOn ? 'on' : 'off'); } catch (_) {}
+    });
+
+    // Colorblind-safe palette (persisted).
+    function applyColorblind(on) {
+        document.body.classList.toggle('colorblind', on);
+        cbCheckbox.checked = on;
+    }
+    applyColorblind(stored('gd2h-colorblind', 'data-initial-colorblind'));
+    cbCheckbox.addEventListener('change', function () {
+        var on = cbCheckbox.checked;
+        applyColorblind(on);
+        try { localStorage.setItem('gd2h-colorblind', on ? 'on' : 'off'); } catch (_) {}
+    });
+
+    // Theme (persisted).
+    try {
+        var savedTheme = localStorage.getItem('gd2h-theme');
+        if (savedTheme) document.body.classList.toggle('theme-dark', savedTheme === 'dark');
     } catch (_) {}
     themeBtn.addEventListener('click', function () {
         var isDark = document.body.classList.toggle('theme-dark');
         try { localStorage.setItem('gd2h-theme', isDark ? 'dark' : 'light'); } catch (_) {}
     });
 
-    // ----- View toggle (unified / split).
-    var currentView = document.body.classList.contains('view-split') ? 'split' : 'unified';
-    var viewButtons = document.querySelectorAll('.view-toggle button');
-
-    function setView(view) {
+    // View toggle (unified / split). Split tables are built on demand.
+    function setView(view, initial) {
         currentView = view;
-        if (view === 'split') document.body.classList.add('view-split');
-        else document.body.classList.remove('view-split');
+        document.body.classList.toggle('view-split', view === 'split');
         viewButtons.forEach(function (b) {
             b.classList.toggle('active', b.getAttribute('data-view') === view);
         });
         try { localStorage.setItem('gd2h-view', view); } catch (_) {}
+        if (initial) return;
+        processSet(activeSet());
         rebuildGroups();
     }
     try {
         var savedView = localStorage.getItem('gd2h-view');
-        if (savedView === 'unified' || savedView === 'split') setView(savedView);
+        if (savedView === 'unified' || savedView === 'split') setView(savedView, true);
     } catch (_) {}
     viewButtons.forEach(function (b) {
         b.addEventListener('click', function () { setView(b.getAttribute('data-view')); });
-    });
-
-    // ----- Whitespace toggle (persisted). Wraps spaces/tabs in spans so CSS
-    //       can overlay markers without changing the underlying characters.
-    var wsCheckbox = document.getElementById('ws-toggle');
-    function transformWs(html) {
-        // Only substitute inside text nodes — skip attributes/tags so
-        // syntax-highlight markup stays intact. Tab is kept after the
-        // arrow so it still advances to the next tab stop.
-        return html.replace(/(<[^>]*>)|([^<]+)/g, function (_, tag, text) {
-            if (tag) return tag;
-            return text
-                .replace(/ /g, '\x00')
-                .replace(/\t/g, '\x01')
-                .replace(/\x00/g, '<span class="ws-mark">\u00B7</span>')
-                .replace(/\x01/g, '<span class="ws-mark">\u2192</span>\t');
-        });
-    }
-    function applyWs(on) {
-        document.querySelectorAll('td.code').forEach(function (td) {
-            if (on) {
-                if (td.dataset.orig === undefined) td.dataset.orig = td.innerHTML;
-                // Unified-view cells start with the diff prefix (' ', '+', '-'),
-                // which isn't part of the source line — skip it so its space
-                // doesn't get marked.
-                var src = td.dataset.orig;
-                var skipPrefix = !!td.closest('table.unified') && src.length > 0;
-                td.innerHTML = skipPrefix
-                    ? src.charAt(0) + transformWs(src.substring(1))
-                    : transformWs(src);
-            } else if (td.dataset.orig !== undefined) {
-                td.innerHTML = td.dataset.orig;
-            }
-        });
-        document.body.classList.toggle('show-whitespace', on);
-        wsCheckbox.checked = on;
-    }
-    try {
-        var savedWs = localStorage.getItem('gd2h-ws');
-        var wsOn = savedWs === null
-            ? (document.body.getAttribute('data-initial-ws') === 'on')
-            : (savedWs === 'on');
-        if (wsOn) applyWs(true);
-    } catch (_) {}
-    wsCheckbox.addEventListener('change', function () {
-        var on = wsCheckbox.checked;
-        applyWs(on);
-        try { localStorage.setItem('gd2h-ws', on ? 'on' : 'off'); } catch (_) {}
     });
 
     // ----- Change navigator (prev/next). Groups depend on current view.
@@ -1683,19 +1895,19 @@ cat <<'HTML_FOOT'
     var counter = document.getElementById('nav-counter');
 
     function isChange(r) {
-        return r.classList.contains('add') || r.classList.contains('del') || r.classList.contains('mod');
+        var cl = r.classList;
+        return cl.contains('add') || cl.contains('del') || cl.contains('mod');
     }
     function rebuildGroups() {
         var sel = (currentView === 'split')
             ? 'table.diff-table.sbs > tbody > tr'
             : 'table.diff-table.unified > tbody > tr';
-        var rows = Array.prototype.slice.call(activeSet().querySelectorAll(sel));
+        var rows = activeSet().querySelectorAll(sel);
         groups = [];
         for (var i = 0; i < rows.length; i++) {
-            if (isChange(rows[i])) {
-                var prev = rows[i].previousElementSibling;
-                if (!prev || !isChange(prev)) groups.push(rows[i]);
-            }
+            if (!isChange(rows[i])) continue;
+            var prev = rows[i].previousElementSibling;
+            if (!prev || !isChange(prev)) groups.push(rows[i]);
         }
         idx = -1;
         prevBtn.disabled = nextBtn.disabled = (groups.length === 0);
@@ -1704,6 +1916,7 @@ cat <<'HTML_FOOT'
     function updateCounter() {
         counter.textContent = (idx < 0 ? 0 : idx + 1) + ' / ' + groups.length;
     }
+    var flashed = null;
     function goTo(i) {
         if (groups.length === 0) return;
         idx = ((i % groups.length) + groups.length) % groups.length;
@@ -1711,7 +1924,8 @@ cat <<'HTML_FOOT'
         var card = target.closest('.file-card');
         if (card) card.classList.remove('collapsed');
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        groups.forEach(function (g) { g.classList.remove('flash'); });
+        if (flashed) flashed.classList.remove('flash');
+        flashed = target;
         target.classList.add('flash');
         updateCounter();
     }
@@ -1739,10 +1953,9 @@ cat <<'HTML_FOOT'
     var statFiles = document.querySelector('.summary .stats span:nth-child(1)');
     var statAdd = document.querySelector('.summary .stats .add');
     var statDel = document.querySelector('.summary .stats .del');
-    function updateStats(set) {
-        var n = set.querySelectorAll('.file-card').length;
-        var a = set.querySelectorAll('table.unified tr.add').length;
-        var d = set.querySelectorAll('table.unified tr.del').length;
+    function updateStats() {
+        // Totals come from the sidebar pass — no extra DOM walk.
+        var n = cards.length, a = totalAdds, d = totalDels;
         if (statFiles) statFiles.innerHTML = '<b>' + n + '</b> file' + (n === 1 ? '' : 's') + ' changed';
         if (statAdd) statAdd.innerHTML = '<b>+' + a + '</b> insertion' + (a === 1 ? '' : 's');
         if (statDel) statDel.innerHTML = '<b>&minus;' + d + '</b> deletion' + (d === 1 ? '' : 's');
@@ -1756,26 +1969,32 @@ cat <<'HTML_FOOT'
         commitRows.forEach(function (r) {
             r.classList.toggle('active', r.getAttribute('data-set') === name);
         });
-        updateStats(target);
+        flashed = null;
+        processSet(target);
         buildSidebar();
+        updateStats();
         rebuildGroups();
         window.scrollTo({ top: 0 });
     }
     commitRows.forEach(function (r) {
         r.addEventListener('click', function () { setActiveSet(r.getAttribute('data-set')); });
     });
-    if (commitRows.length) updateStats(activeSet());
 
+    // ----- Initial run (only the visible diff set is touched).
+    processSet(activeSet());
+    buildSidebar();
+    if (commitRows.length) updateStats();
     rebuildGroups();
 
     // ----- Auto-jump to the first change on load.
     if (groups.length > 0 && !window.location.hash) {
         idx = 0;
         var first = groups[0];
-        var card = first.closest('.file-card');
-        if (card) card.classList.remove('collapsed');
+        var firstCard = first.closest('.file-card');
+        if (firstCard) firstCard.classList.remove('collapsed');
         requestAnimationFrame(function () {
             first.scrollIntoView({ block: 'center' });
+            flashed = first;
             first.classList.add('flash');
             updateCounter();
         });

@@ -15,13 +15,14 @@ No dependencies beyond `git` and `bash`.
 - **Self-contained HTML** -- single file, no external dependencies
 - **Unified & Split views** -- toggle between views in the browser
 - **Light & Dark themes** -- toggle in the browser or set via CLI
-- **File sidebar** -- left panel for fast navigation between files
+- **Colorblind-safe palette** -- blue/orange add & delete colors for both themes, toggle in the browser or `--colorblind on`
+- **Sidebar** -- left panel listing commits and files for fast navigation
 - **Sticky file header** -- stays visible while scrolling through long diffs
 - **Prev/Next navigation** -- floating buttons to jump between changes
 - **Collapsible files** -- collapse/expand individual file diffs
 - **Collapse unchanged** -- fold long unchanged regions, toggle in the browser or via CLI
 - **Whitespace markers** -- visualize spaces/tabs, toggle in the browser or via CLI
-- **Commit log** -- shows commit SHAs, messages, authors, and dates
+- **Commit log** -- sidebar section with commit SHAs, messages, authors, and dates
 - **Per-commit navigation** -- click a commit to view its diff alone, or "All commits" for the whole range
 - **Full file or compact diff** -- use `-U` to control context lines
 - **Work in progress** -- diff uncommitted changes with `--working`, `--staged` or `--unstaged` (untracked files included)
@@ -82,6 +83,7 @@ git_diff_to_html.sh abc1234
 | `--theme NAME` | Initial theme: `light` or `dark` | `light` |
 | `--whitespace STATE` | Initial whitespace markers: `on` or `off` | `on` |
 | `--collapse STATE` | Initial collapse-unchanged: `on` or `off` | `on` |
+| `--colorblind STATE` | Colorblind-safe palette (blue/orange instead of green/red): `on` or `off` | `off` |
 | `-h, --help` | Show help | |
 
 ## License
