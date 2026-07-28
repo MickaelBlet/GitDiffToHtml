@@ -2,7 +2,7 @@
 
 A single Bash script that generates self-contained, Bitbucket-style HTML pages from any `git diff`.
 
-No dependencies beyond `git` and `bash`.
+No dependencies beyond `git`, `bash` and `awk`.
 
 ## Preview
 
@@ -18,6 +18,9 @@ No dependencies beyond `git` and `bash`.
 - **Colorblind-safe palette** -- blue/orange add & delete colors for both themes, toggle in the browser or `--colorblind on`
 - **Sidebar** -- left panel listing commits and files for fast navigation
 - **Sticky file header** -- stays visible while scrolling through long diffs
+- **Word-level diff** -- highlights what actually changed inside a modified line
+- **Syntax highlighting** -- per-language colors, detected from the file extension
+- **Copy-friendly** -- `+`/`-` markers and whitespace dots are never part of a copied selection
 - **Prev/Next navigation** -- floating buttons to jump between changes
 - **Collapsible files** -- collapse/expand individual file diffs
 - **Collapse unchanged** -- fold long unchanged regions, toggle in the browser or via CLI
@@ -76,7 +79,7 @@ git_diff_to_html.sh abc1234
 | `--staged`, `--cached` | Diff staged changes only (index vs `HEAD`) | |
 | `--unstaged` | Diff unstaged changes only (work tree vs index) | |
 | `--untracked STATE` | Include untracked files (`--working` / `--unstaged`): `on` or `off` | `on` |
-| `-o, --output FILE` | Output HTML file | `git-diff.html` |
+| `-o, --output FILE` | Output HTML file | `git_diff.html` |
 | `-t, --title TEXT` | Page title | `Git Diff: <range>` |
 | `-U, --unified N` | Context lines around each change | Full file |
 | `--view MODE` | Initial view: `unified` or `split` | `unified` |

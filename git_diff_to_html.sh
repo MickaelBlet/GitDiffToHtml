@@ -16,7 +16,7 @@
 #                        including untracked files.
 #       --untracked ST   Include untracked files: "on" (default) or "off".
 #                        Only meaningful with --working / --unstaged.
-#   -o, --output FILE    Output HTML file (default: git-diff.html)
+#   -o, --output FILE    Output HTML file (default: git_diff.html)
 #   -t, --title  TEXT    Page title (default: "Git Diff: <range>")
 #   -U, --unified N      Number of context lines around each change.
 #                        Default is very large so the full content of each
